@@ -47,6 +47,7 @@ func (m *Model) setCatalog(info catalogInfo) {
 	if derefOrZero(m.app.NavState.Selected()) >= len(m.app.NavItems) {
 		m.app.NavState.Select(intPtr(len(m.app.NavItems) - 1))
 	}
+	m.syncSettingsRows()
 }
 
 func (m Model) sectionByCollection(id string) (provider.Section, bool) {
@@ -90,6 +91,11 @@ func (m Model) collectionTitle(id string) string {
 	}
 }
 
+// fromReplacedProvider is true for a message that an earlier provider sent before a switch.
+func (m Model) fromReplacedProvider(source provider.ID) bool {
+	return source != "" && (m.provider == nil || m.provider.ID() != source)
+}
+
 func (m Model) providerName() string {
 	if m.catalog.name == "" {
 		return "music provider"
@@ -127,5 +133,5 @@ func (m *Model) loadMoreFlow(autoplay bool) tea.Cmd {
 	}
 	m.app.FlowLoadingMore = true
 	m.app.StatusMessage = fmt.Sprintf("Loading more %s...", sec.Label)
-	return loadRadioPageCmd(radio, sec, m.app.FlowNextIndex, autoplay)
+	return loadRadioPageCmd(m.provider.ID(), radio, sec, m.app.FlowNextIndex, autoplay)
 }

@@ -11,10 +11,7 @@ import (
 func (m *Model) setProvider(p provider.Provider) {
 	m.provider = p
 	m.caps = provider.CapabilitiesOf(p)
-	m.app.SettingsItemCount = len(m.settingsRows())
-	if derefOrZero(m.app.SettingsState.Selected()) >= m.app.SettingsItemCount {
-		m.app.SettingsState.Select(intPtr(max(0, m.app.SettingsItemCount-1)))
-	}
+	m.syncSettingsRows()
 }
 
 func (m *Model) setNotAvailable() {

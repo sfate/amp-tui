@@ -40,12 +40,3 @@ func TestNormalizeARLRejectsEmptyInput(t *testing.T) {
 		t.Fatalf("expected ErrARLMissing, got %v", err)
 	}
 }
-
-func TestMaskARL(t *testing.T) {
-	if got := MaskARL("abcd1234wxyz"); got != "abcd****wxyz" {
-		t.Fatalf("unexpected masked token: %q", got)
-	}
-	if got := MaskARL("short"); got != "********" {
-		t.Fatalf("unexpected short masked token: %q", got)
-	}
-}

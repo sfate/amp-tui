@@ -44,7 +44,7 @@ I                  Raise playback quality
 + / -              Volume up/down
 S                  Toggle Favorites sort direction
 /                  Search
-O                  Open/change Deezer login
+O                  Open/change the provider login
 Esc                Leave search/settings
 Q                  Quit
 ```
@@ -82,6 +82,12 @@ Check runtime dependencies:
 ./bin/amp-tui --doctor
 ```
 
+Use another registered provider for one run without saving it (`--help` lists the IDs; an unknown ID exits with status 2):
+
+```bash
+./bin/amp-tui --provider deezer
+```
+
 Useful checks:
 
 ```bash
@@ -96,12 +102,21 @@ On first launch, `amp-tui` opens a login screen instead of requiring manual conf
 
 Press `Enter` to confirm opening Deezer in a temporary browser session. After signing in, return to the app. It will capture the Deezer session from that temporary browser, validate it, save it, and load your library automatically.
 
-If a supported Chromium browser is not available, press `P` from the login confirmation screen to use the manual fallback with either:
+If a supported Chromium browser is not available, press `Tab` on the login screen to switch to the manual fallback with either:
 
 - a Deezer `arl` value
 - a copied browser `Cookie` header containing `arl=...`
 
 After validation succeeds, the app stores the ARL in the OS keychain and loads your Deezer library. The token is masked in the UI while you type or paste it.
+
+## Settings
+
+Open `Settings` from the Browse list. The rows are:
+
+- `Provider`: `Left`/`Right`/`Enter` switches to the next registered provider. A switch stops playback, clears the queue and search results, saves the choice, and loads the new library. If the provider needs a login and has none, the login screen opens.
+- `Account`: shows `Signed in` or `Not signed in`. `Enter` signs out (deletes the saved login and opens the login screen) or signs in. Providers without a login do not show this row.
+- Theme, Volume, Crossfade, Duration, Display, Compact View: global settings.
+- Settings of the active provider, such as `Quality`.
 
 ## Configuration
 

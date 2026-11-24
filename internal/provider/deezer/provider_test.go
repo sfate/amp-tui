@@ -3,6 +3,7 @@ package deezer
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/sfate/amp-tui/internal/provider"
@@ -80,20 +81,21 @@ func TestRegisterAddsDeezerFactory(t *testing.T) {
 	}
 }
 
-func TestAuthenticatorNormalizesAndMasksSecrets(t *testing.T) {
+func TestLoginStepsAreBrowserThenMaskedARL(t *testing.T) {
 	p, _ := New(provider.Config{})
-	got, err := p.NormalizeSecret("Cookie: sid=session; arl=token-value")
+	steps := p.LoginSteps()
+	if len(steps) != 2 || steps[0].Kind != provider.LoginStepBrowser || steps[1].Kind != provider.LoginStepInput || !steps[1].Masked {
+		t.Fatalf("unexpected steps %+v", steps)
+	}
+	if steps[0].Prompt != "Press Enter to open Deezer login in your browser" || !strings.Contains(steps[1].Prompt, "ARL") {
+		t.Fatalf("unexpected prompts %+v", steps)
+	}
+	got, err := p.Submit(context.Background(), steps[1].ID, "Cookie: sid=session; arl=token-value")
 	if err != nil || got != "token-value" {
-		t.Fatalf("normalize = %q, %v", got, err)
+		t.Fatalf("submit ARL = %q, %v", got, err)
 	}
-	if p.MaskSecret("abcd1234wxyz") != "abcd****wxyz" {
-		t.Fatalf("unexpected mask %q", p.MaskSecret("abcd1234wxyz"))
-	}
-	if p.MaskSecret("sid=x; arl=secret") != "Cookie header pasted" {
-		t.Fatalf("expected cookie header to stay hidden, got %q", p.MaskSecret("sid=x; arl=secret"))
-	}
-	if p.LoginPrompt().ConfirmText != "Press Enter to open Deezer login in your browser" {
-		t.Fatalf("unexpected confirm text %q", p.LoginPrompt().ConfirmText)
+	if _, err := p.Submit(context.Background(), "unknown", "x"); err == nil {
+		t.Fatal("expected an error for an unknown step")
 	}
 }
 

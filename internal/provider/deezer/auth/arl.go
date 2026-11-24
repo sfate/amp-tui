@@ -31,14 +31,3 @@ func NormalizeARL(input string) (string, error) {
 	}
 	return value, nil
 }
-
-func MaskARL(arl string) string {
-	value := strings.TrimSpace(arl)
-	if value == "" {
-		return ""
-	}
-	if len(value) <= 8 {
-		return "********"
-	}
-	return value[:4] + strings.Repeat("*", len(value)-8) + value[len(value)-4:]
-}

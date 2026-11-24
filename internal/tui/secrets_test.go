@@ -19,7 +19,7 @@ func TestLoginStoresCredentialInSecretStoreNotConfig(t *testing.T) {
 	_, path := isolateConfig(t)
 	store := secrets.NewMemory()
 	model := New(WithRegistry(testRegistry()), WithSecrets(store))
-	model.login.confirmOpen = false
+	model.login.step = 1
 
 	next, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "Cookie: sid=session; arl=token-value"}))
 	model = next.(Model)

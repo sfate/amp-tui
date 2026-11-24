@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -19,25 +20,61 @@ import (
 )
 
 type options struct {
-	doctor bool
+	doctor   bool
+	provider provider.ID
 }
 
-func parseOptions(args []string, out io.Writer) (options, error) {
+// usageError marks bad command-line input, which exits with status 2 like flag does.
+type usageError struct{ msg string }
+
+func (e usageError) Error() string { return e.msg }
+
+func exitCode(err error) int {
+	var usage usageError
+	if errors.As(err, &usage) {
+		return 2
+	}
+	return 1
+}
+
+func parseOptions(args []string, out io.Writer, reg *provider.Registry) (options, error) {
 	var o options
+	var providerID string
+	known := knownIDs(reg)
 	flags := flag.NewFlagSet("amp-tui", flag.ContinueOnError)
 	flags.SetOutput(out)
 	flags.BoolVar(&o.doctor, "doctor", false, "check runtime dependencies and exit")
+	flags.StringVar(&providerID, "provider", "", "music provider for this run only, not saved ("+known+")")
 	if err := flags.Parse(args); err != nil {
-		return o, err
+		if errors.Is(err, flag.ErrHelp) {
+			return o, err
+		}
+		return o, usageError{err.Error()}
 	}
 	if flags.NArg() > 0 {
-		return o, fmt.Errorf("unexpected arguments: %v", flags.Args())
+		return o, usageError{fmt.Sprintf("unexpected arguments: %v", flags.Args())}
+	}
+	if providerID != "" {
+		if _, ok := reg.Lookup(provider.ID(providerID)); !ok {
+			return o, usageError{fmt.Sprintf("unknown provider %q; known providers: %s", providerID, known)}
+		}
+		o.provider = provider.ID(providerID)
 	}
 	return o, nil
 }
 
+func knownIDs(reg *provider.Registry) string {
+	ids := reg.IDs()
+	names := make([]string, len(ids))
+	for i, id := range ids {
+		names[i] = string(id)
+	}
+	return strings.Join(names, ", ")
+}
+
 func run(args []string) error {
-	o, err := parseOptions(args, os.Stderr)
+	reg := newRegistry()
+	o, err := parseOptions(args, os.Stderr, reg)
 	if err != nil {
 		return err
 	}
@@ -49,7 +86,7 @@ func run(args []string) error {
 		checks := append(doctor.PlatformChecks(), doctor.SecretStoreCheck(secrets.NewKeyring(), secretsPath))
 		return doctor.Run(context.Background(), os.Stdout, checks)
 	}
-	model := tui.New(tui.WithRegistry(newRegistry()), tui.WithSecrets(secrets.Default(secretsPath)))
+	model := tui.New(tui.WithRegistry(reg), tui.WithSecrets(secrets.Default(secretsPath)), tui.WithProviderOverride(o.provider))
 	_, err = tea.NewProgram(model).Run()
 	return err
 }
@@ -66,6 +103,6 @@ func main() {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "amp-tui: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }

@@ -36,6 +36,18 @@ func (r *Registry) Name(id ID) string {
 	return e.name
 }
 
+// IDs keeps the registration order, so Settings cycles in a fixed order.
+func (r *Registry) IDs() []ID {
+	if r == nil {
+		return nil
+	}
+	ids := make([]ID, 0, len(r.entries))
+	for _, e := range r.entries {
+		ids = append(ids, e.id)
+	}
+	return ids
+}
+
 // Default is the first registered provider until config selects one.
 func (r *Registry) Default() ID {
 	if r == nil || len(r.entries) == 0 {

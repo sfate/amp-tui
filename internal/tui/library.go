@@ -13,6 +13,9 @@ import (
 )
 
 func (m *Model) onBootstrapFailed(msg bootstrapFailedMsg) tea.Cmd {
+	if m.fromReplacedProvider(msg.source) {
+		return nil
+	}
 	m.ready = true
 	if errors.Is(msg.err, provider.ErrUnauthenticated) {
 		m.startLogin()
@@ -29,6 +32,9 @@ func (m *Model) onBootstrapFailed(msg bootstrapFailedMsg) tea.Cmd {
 }
 
 func (m *Model) onBootstrapLoaded(msg bootstrapLoadedMsg) tea.Cmd {
+	if m.fromReplacedProvider(msg.source) {
+		return nil
+	}
 	m.bootstrapFailed = false
 	m.app.Playlists = msg.playlists
 	m.app.PlaylistState.Select(intPtr(0))
@@ -37,6 +43,9 @@ func (m *Model) onBootstrapLoaded(msg bootstrapLoadedMsg) tea.Cmd {
 }
 
 func (m *Model) onCollectionLoaded(msg collectionLoadedMsg) tea.Cmd {
+	if m.fromReplacedProvider(msg.source) {
+		return nil
+	}
 	if msg.isFlow && msg.append {
 		return m.appendFlowTracks(msg)
 	}
