@@ -200,7 +200,7 @@ func TestViewShowsLoginScreenWhenARLMissing(t *testing.T) {
 
 func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 	model := NewWithConfig(config.Default())
-	model.loginConfirmOpen = false
+	model.login.confirmOpen = false
 	model.loaderFactory = func(cfg config.Config) (Loader, error) {
 		if cfg.ARL != "token-value" {
 			t.Fatalf("expected normalized ARL, got %q", cfg.ARL)
@@ -218,14 +218,14 @@ func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 	nextModel, cmd := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	model = nextModel.(Model)
 
-	if !model.loginLoading {
+	if !model.login.loading {
 		t.Fatal("expected login validation to start")
 	}
 	msg := cmd()
 	nextModel, cmd = model.Update(msg)
 	model = nextModel.(Model)
 
-	if model.loginActive {
+	if model.login.active {
 		t.Fatal("expected login mode to close after successful validation")
 	}
 	if len(saved) != 1 || saved[0].ARL != "token-value" {
@@ -245,14 +245,14 @@ func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "O"}))
 	updated := nextModel.(Model)
 
-	if !updated.loginActive {
+	if !updated.login.active {
 		t.Fatal("expected O to enter login mode")
 	}
-	if !updated.loginConfirmOpen {
+	if !updated.login.confirmOpen {
 		t.Fatal("expected O to ask for browser-open confirmation")
 	}
-	if updated.loginInput != "" {
-		t.Fatalf("expected login input to be cleared, got %q", updated.loginInput)
+	if updated.login.input != "" {
+		t.Fatalf("expected login input to be cleared, got %q", updated.login.input)
 	}
 	if !strings.Contains(updated.app.StatusMessage, "Press Enter") {
 		t.Fatalf("expected login prompt status, got %q", updated.app.StatusMessage)
@@ -261,15 +261,15 @@ func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
 
 func TestLoginConfirmationEnterStartsBrowserLogin(t *testing.T) {
 	model := NewWithConfig(config.Default())
-	model.loginConfirmOpen = true
+	model.login.confirmOpen = true
 
 	nextModel, cmd := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
 
-	if updated.loginConfirmOpen {
+	if updated.login.confirmOpen {
 		t.Fatal("expected confirmation state to clear")
 	}
-	if !updated.loginLoading {
+	if !updated.login.loading {
 		t.Fatal("expected browser login to start loading")
 	}
 	if cmd == nil {
@@ -343,7 +343,7 @@ func TestViewShowsProgressBar(t *testing.T) {
 		TotalMS:   180000,
 	}
 	model.app.IsPlaying = true
-	model.artworkANSI = strings.Join([]string{
+	model.artwork.ansi = strings.Join([]string{
 		"\x1b[38;2;255;0;0m▀▀▀▀▀▀▀▀▀▀▀▀▀▀\x1b[0m",
 		"\x1b[38;2;0;255;0m▀▀▀▀▀▀▀▀▀▀▀▀▀▀\x1b[0m",
 		"\x1b[38;2;0;0;255m▀▀▀▀▀▀▀▀▀▀▀▀▀▀\x1b[0m",
@@ -856,7 +856,7 @@ func TestBufferingProgressShowsPercentageAndStage(t *testing.T) {
 		quality: deezer.AudioQuality320,
 	})
 	updated = nextModel.(Model)
-	if updated.bufferingPercent != nil {
+	if updated.progress.bufferingPercent != nil {
 		t.Fatal("expected buffering percentage to clear after track metadata arrives")
 	}
 }
@@ -881,7 +881,7 @@ func TestBufferingProgressKeepsListeningForTrackChanged(t *testing.T) {
 	if updated.app.NowPlaying == nil || updated.app.NowPlaying.Title != "Loaded Song" {
 		t.Fatal("expected track changed event after buffering progress to update now playing")
 	}
-	if updated.bufferingPercent != nil {
+	if updated.progress.bufferingPercent != nil {
 		t.Fatal("expected buffering percentage to clear after track changed event")
 	}
 }
@@ -906,7 +906,7 @@ func TestLateBufferingProgressDoesNotOverridePlayingState(t *testing.T) {
 	if got := updated.displayState(); got != "Playing" {
 		t.Fatalf("expected late buffering progress not to override playing state, got %q", got)
 	}
-	if updated.bufferingPercent != nil {
+	if updated.progress.bufferingPercent != nil {
 		t.Fatal("expected late buffering percentage to be ignored after playback starts")
 	}
 }
@@ -929,7 +929,7 @@ func TestTrackChangedStartsPlayingStateBeforeProgressEvent(t *testing.T) {
 	if got := updated.displayState(); got != "Playing" {
 		t.Fatalf("expected track changed to switch state to playing, got %q", got)
 	}
-	if !updated.progressActive {
+	if !updated.progress.active {
 		t.Fatal("expected local progress ticking after track changed")
 	}
 
@@ -1181,14 +1181,14 @@ func TestRememberArtworkEvictsOldEntries(t *testing.T) {
 		model.rememberArtwork(url, fmt.Sprintf("art-%02d", i))
 	}
 
-	if len(model.artCache) != artworkCacheLimit {
-		t.Fatalf("expected artwork cache capped at %d entries, got %d", artworkCacheLimit, len(model.artCache))
+	if len(model.artwork.cache) != artworkCacheLimit {
+		t.Fatalf("expected artwork cache capped at %d entries, got %d", artworkCacheLimit, len(model.artwork.cache))
 	}
-	if _, ok := model.artCache["https://example.invalid/art-00.jpg"]; ok {
+	if _, ok := model.artwork.cache["https://example.invalid/art-00.jpg"]; ok {
 		t.Fatal("expected oldest artwork to be evicted")
 	}
 	lastURL := fmt.Sprintf("https://example.invalid/art-%02d.jpg", artworkCacheLimit+4)
-	if model.artCache[lastURL] == "" {
+	if model.artwork.cache[lastURL] == "" {
 		t.Fatalf("expected newest artwork %q to remain cached", lastURL)
 	}
 }
@@ -1367,7 +1367,7 @@ func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected delayed next-track command")
 	}
-	firstRequest := updated.playbackRequest
+	firstRequest := updated.pendingPlayback.requestID
 
 	nextModel, _ = updated.Update(tea.KeyPressMsg(tea.Key{Text: "n"}))
 	updated = nextModel.(Model)
@@ -1387,7 +1387,7 @@ func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 		t.Fatal("did not expect stale scheduled playback to start")
 	}
 
-	nextModel, startCmd := updated.Update(scheduledPlaybackMsg{requestID: updated.playbackRequest})
+	nextModel, startCmd := updated.Update(scheduledPlaybackMsg{requestID: updated.pendingPlayback.requestID})
 	updated = nextModel.(Model)
 	if startCmd == nil {
 		t.Fatal("expected latest scheduled playback to start")
@@ -1660,8 +1660,8 @@ func TestStartingNextTrackClearsStaleNowPlayingAndArtwork(t *testing.T) {
 	}
 	model.app.QueueIndex = intPtr(1)
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "Old Song", Artist: "A"}
-	model.artworkANSI = "old-art"
-	model.artworkURL = "https://example.invalid/old.jpg"
+	model.artwork.ansi = "old-art"
+	model.artwork.url = "https://example.invalid/old.jpg"
 
 	cmd := model.startTrackPlayback("2")
 	if cmd == nil {
@@ -1670,7 +1670,7 @@ func TestStartingNextTrackClearsStaleNowPlayingAndArtwork(t *testing.T) {
 	if model.app.NowPlaying != nil {
 		t.Fatal("expected stale now-playing metadata to be cleared while buffering")
 	}
-	if model.artworkANSI != "" || model.artworkURL != "" {
+	if model.artwork.ansi != "" || model.artwork.url != "" {
 		t.Fatal("expected stale artwork to be cleared while buffering")
 	}
 
@@ -1688,7 +1688,7 @@ func TestStatusLineRendersDefaultArtworkWhenArtworkMissing(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "Song", Artist: "Artist"}
-	model.artworkANSI = ""
+	model.artwork.ansi = ""
 
 	view := model.renderStatusLine()
 	if !strings.Contains(view, "NO ART") || !strings.Contains(view, "+--------+") {
@@ -1700,7 +1700,7 @@ func TestStatusAreaRendersDisplayPanelWhenEnabled(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.app.IsPlaying = true
-	model.visualizerBands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
+	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
 
 	view := model.renderStatusArea()
 	if !strings.Contains(view, "Status") || !strings.Contains(view, "Display") {
@@ -1721,7 +1721,7 @@ func TestStatusAreaHidesDisplayPanelWhenDisabled(t *testing.T) {
 	model.app.Config.DisplayMode = config.DisplayModeOff
 	model.app.Config.DisplayEnabled = false
 	model.app.IsPlaying = true
-	model.visualizerBands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
+	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
 
 	view := model.renderStatusArea()
 	if strings.Contains(view, "Display") {
@@ -1801,7 +1801,7 @@ func TestCompactViewRendersEqualizerInsideStatusWhenHeightAllows(t *testing.T) {
 	model.width = 120
 	model.height = 30
 	model.app.IsPlaying = true
-	model.visualizerBands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
+	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
 	for i := 1; i <= 8; i++ {
 		track := app.Track{
 			ID:     fmt.Sprintf("%02d", i),
@@ -1834,7 +1834,7 @@ func TestCompactViewRendersEqualizerInsideStatusWhenHeightAllows(t *testing.T) {
 func TestCompactStatusColumnUsesFullHeight(t *testing.T) {
 	model := NewWithLoader(config.Default(), nil)
 	model.app.IsPlaying = true
-	model.visualizerBands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
+	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
 
 	view := model.renderCompactStatusColumn(60, 28)
 	if got := len(strings.Split(view, "\n")); got != 28 {
@@ -1864,7 +1864,7 @@ func TestStatusProgressFitsWithoutEllipsis(t *testing.T) {
 func TestDisplayPanelRendersModes(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 	model.app.IsPlaying = true
-	model.visualizerBands = []uint8{1, 3, 5, 7, 8, 6, 4, 2}
+	model.visualizer.bands = []uint8{1, 3, 5, 7, 8, 6, 4, 2}
 
 	cases := []struct {
 		mode  config.DisplayMode
@@ -1921,18 +1921,18 @@ func TestEqualizerPeaksRiseAndFall(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 
 	model.updateVisualizerPeaks([]uint8{8, 4})
-	if len(model.visualizerPeaks) != 2 || model.visualizerPeaks[0] != 1 {
-		t.Fatalf("expected peak to rise to current level, got %#v", model.visualizerPeaks)
+	if len(model.visualizer.peaks) != 2 || model.visualizer.peaks[0] != 1 {
+		t.Fatalf("expected peak to rise to current level, got %#v", model.visualizer.peaks)
 	}
 
 	model.updateVisualizerPeaks([]uint8{1, 4})
-	if model.visualizerPeaks[0] >= 1 || model.visualizerPeaks[0] <= float64(1)/8 {
-		t.Fatalf("expected peak to fall slowly above current level, got %#v", model.visualizerPeaks)
+	if model.visualizer.peaks[0] >= 1 || model.visualizer.peaks[0] <= float64(1)/8 {
+		t.Fatalf("expected peak to fall slowly above current level, got %#v", model.visualizer.peaks)
 	}
 
 	model.updateVisualizerPeaks([]uint8{8, 4})
-	if model.visualizerPeaks[0] != 1 {
-		t.Fatalf("expected peak to reset when bar reaches it, got %#v", model.visualizerPeaks)
+	if model.visualizer.peaks[0] != 1 {
+		t.Fatalf("expected peak to reset when bar reaches it, got %#v", model.visualizer.peaks)
 	}
 }
 
@@ -1947,7 +1947,7 @@ func TestStatusLineDoesNotIncludeVisualizer(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.app.IsPlaying = true
-	model.visualizerBands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
+	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
 
 	view := model.renderStatusLine()
 	if strings.Contains(view, "Display") {
@@ -2230,9 +2230,9 @@ func TestStaleSearchResultsAreIgnored(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 
 	_ = model.startSearch("old")
-	oldID := model.activeSearchID
+	oldID := model.search.activeID
 	_ = model.startSearch("new")
-	newID := model.activeSearchID
+	newID := model.search.activeID
 	if oldID == newID {
 		t.Fatal("expected a new search request id")
 	}
@@ -2254,7 +2254,7 @@ func TestStaleSearchResultsAreIgnored(t *testing.T) {
 func TestCollectionLoadInvalidatesPendingSearch(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 	_ = model.startSearch("old")
-	searchID := model.activeSearchID
+	searchID := model.search.activeID
 
 	nextModel, _ := model.Update(collectionLoadedMsg{
 		id:     "playlist",
@@ -2262,8 +2262,8 @@ func TestCollectionLoadInvalidatesPendingSearch(t *testing.T) {
 		tracks: []app.Track{{ID: "playlist-track", Title: "Playlist Track", Artist: "A"}},
 	})
 	updated := nextModel.(Model)
-	if updated.activeSearchID != 0 {
-		t.Fatalf("expected active search to be invalidated, got %d", updated.activeSearchID)
+	if updated.search.activeID != 0 {
+		t.Fatalf("expected active search to be invalidated, got %d", updated.search.activeID)
 	}
 
 	nextModel, _ = updated.Update(searchLoadedMsg{
@@ -2284,7 +2284,7 @@ func TestCollectionLoadInvalidatesPendingSearch(t *testing.T) {
 func TestFlowLoadInvalidatesPendingSearch(t *testing.T) {
 	model := NewWithLoader(config.Default(), &fakeLoader{})
 	_ = model.startSearch("old")
-	searchID := model.activeSearchID
+	searchID := model.search.activeID
 
 	nextModel, _ := model.Update(collectionLoadedMsg{
 		id:       "__flow__",
@@ -2294,8 +2294,8 @@ func TestFlowLoadInvalidatesPendingSearch(t *testing.T) {
 		autoplay: false,
 	})
 	updated := nextModel.(Model)
-	if updated.activeSearchID != 0 {
-		t.Fatalf("expected active search to be invalidated, got %d", updated.activeSearchID)
+	if updated.search.activeID != 0 {
+		t.Fatalf("expected active search to be invalidated, got %d", updated.search.activeID)
 	}
 
 	nextModel, _ = updated.Update(searchLoadedMsg{
@@ -2397,8 +2397,8 @@ func TestCollectionLoadPrebuffersFirstTwentyQueuedTracks(t *testing.T) {
 	if len(runtime.prebuffered) != 1 || !slices.Equal(runtime.prebuffered[0], want) {
 		t.Fatalf("expected first twenty tracks to prebuffer, got %#v", runtime.prebuffered)
 	}
-	if len(updated.prebufferStatuses) != 20 {
-		t.Fatalf("expected twenty prebuffer statuses, got %d", len(updated.prebufferStatuses))
+	if len(updated.prebuffer.statuses) != 20 {
+		t.Fatalf("expected twenty prebuffer statuses, got %d", len(updated.prebuffer.statuses))
 	}
 }
 
@@ -2786,15 +2786,15 @@ func TestBootstrapFailureRecovery(t *testing.T) {
 			model := NewWithLoader(cfg, loader)
 			updatedModel, _ := model.Update(bootstrapCmd(loader)())
 			updated := updatedModel.(Model)
-			if updated.loginActive != tc.login {
-				t.Fatalf("loginActive = %v, want %v", updated.loginActive, tc.login)
+			if updated.login.active != tc.login {
+				t.Fatalf("loginActive = %v, want %v", updated.login.active, tc.login)
 			}
 			if tc.login {
-				if !updated.loginConfirmOpen || updated.loader != nil {
+				if !updated.login.confirmOpen || updated.loader != nil {
 					t.Fatal("expected required login with rejected loader removed")
 				}
 				updated.cancelLogin()
-				if !updated.loginActive {
+				if !updated.login.active {
 					t.Fatal("rejected session must not allow cancelling into library")
 				}
 			} else {
