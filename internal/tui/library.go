@@ -18,7 +18,7 @@ func (m *Model) onBootstrapFailed(msg bootstrapFailedMsg) tea.Cmd {
 		m.startLogin()
 		m.bootstrapFailed = false
 		m.shutdownRuntime()
-		m.provider = nil
+		m.setProvider(nil)
 		m.runtime = nil
 		m.app.StatusMessage = fmt.Sprintf("Saved %s session expired or was rejected. Press Enter to sign in again", m.providerName())
 	} else {

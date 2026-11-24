@@ -30,8 +30,6 @@ const (
 	CommandShutdown
 )
 
-const SettingsItemCount = 7
-
 const (
 	flowQueueMaxTracks     = 72
 	flowQueuePreviousLimit = 24
@@ -153,6 +151,8 @@ type App struct {
 	FlowSeenTrackIDOrder []string
 	// NavItems are the sidebar Browse entries, in display order.
 	NavItems []string
+	// SettingsItemCount is the count of Settings rows the provider supports.
+	SettingsItemCount int
 	// FlowCollectionID is the radio collection that feeds the flow queue.
 	FlowCollectionID string
 }
@@ -226,7 +226,7 @@ func (a *App) HandleDown() {
 	case ActivePanelMain:
 		if a.ViewingSettings {
 			current := derefOrZero(a.SettingsState.Selected())
-			a.SettingsState.Select(intPtr(min(current+1, SettingsItemCount-1)))
+			a.SettingsState.Select(intPtr(max(0, min(current+1, a.SettingsItemCount-1))))
 		} else if a.ShowingSearchResult {
 			last := 0
 			switch a.SearchCategory {

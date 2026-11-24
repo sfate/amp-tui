@@ -545,7 +545,7 @@ func TestQueueRowsRenderPrebufferIndicators(t *testing.T) {
 }
 
 func TestSettingsViewShowsEditableSettingsWithoutDiscord(t *testing.T) {
-	model := NewWithProvider(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), withStream(&fakeLoader{}))
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
 	model.app.SettingsState.Select(intPtr(0))
@@ -738,7 +738,7 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 func TestSettingsDisplayPersists(t *testing.T) {
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeEqualizer
-	model := NewWithProvider(cfg, &fakeLoader{})
+	model := NewWithProvider(cfg, withStream(&fakeLoader{}))
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)
@@ -761,7 +761,7 @@ func TestSettingsDisplayPersists(t *testing.T) {
 func TestSettingsCompactViewPersists(t *testing.T) {
 	cfg := config.Default()
 	cfg.CompactView = true
-	model := NewWithProvider(cfg, &fakeLoader{})
+	model := NewWithProvider(cfg, withStream(&fakeLoader{}))
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)

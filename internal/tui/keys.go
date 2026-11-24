@@ -22,6 +22,9 @@ func (m *Model) onKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		m.app.StatusMessage = m.loadingStatus()
 		return tea.Batch(bootstrapCmd(m.provider), loadingTickCmd())
 	}
+	if m.gateKey(msg.String()) {
+		return nil
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if m.session != nil {
