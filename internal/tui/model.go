@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -18,12 +17,15 @@ import (
 
 // Model is the Bubble Tea root model; each concern keeps its state and handlers in its own file.
 type Model struct {
-	app             *app.App
-	provider        provider.Provider
-	providerID      provider.ID
-	caps            provider.Capabilities
-	factory         provider.Factory
-	catalog         catalogInfo
+	app        *app.App
+	provider   provider.Provider
+	providerID provider.ID
+	caps       provider.Capabilities
+	factory    provider.Factory
+	registry   *provider.Registry
+	catalog    catalogInfo
+	// configProvider is saved instead of the active provider while --provider or a fallback chose it.
+	configProvider  string
 	saveConfig      func(config.Config) error
 	secrets         secrets.Store
 	configLoadErr   error
@@ -85,55 +87,26 @@ func NewWithConfig(cfg config.Config, opts ...Option) Model {
 
 func newWithConfig(cfg config.Config, loadErr error, o options) Model {
 	cfg = normalizeConfig(cfg)
-	id := provider.ID(cfg.Provider)
-	if _, ok := o.registry.Lookup(id); !ok {
-		id = o.registry.Default()
-	}
-	factory, _ := o.registry.Lookup(id)
-	info := catalogInfo{name: o.registry.Name(id)}
-
-	var credential string
-	var credErr error
-	var session provider.Provider
-	var factoryErr error
-	if factory != nil {
-		credential, credErr = o.secrets.Get(string(id), secrets.CredentialKey)
-		if errors.Is(credErr, secrets.ErrNotFound) {
-			credErr = nil
-		}
-		instance, err := factory(newProviderConfig(cfg, id, credential, o.secrets, loadErr))
-		if err != nil {
-			factoryErr = err
-		} else {
-			info = catalogInfoOf(instance)
-			if strings.TrimSpace(credential) != "" {
-				session = instance
-			}
-		}
-	}
-
-	model := newModel(app.New(cfg), session, factory)
-	model.providerID = id
+	model := newModel(app.New(cfg), nil, nil)
+	model.registry = o.registry
 	model.secrets = o.secrets
 	model.configLoadErr = loadErr
-	model.setCatalog(info)
-	loginActive := session == nil
-	switch {
-	case factory == nil:
-		model.app.StatusMessage = "No music provider configured"
-	case factoryErr != nil:
-		model.app.StatusMessage = fmt.Sprintf("Login required: %v", factoryErr)
-	case credErr != nil:
-		model.app.StatusMessage = fmt.Sprintf("Login required: could not read the saved login: %v", credErr)
-	case loginActive && info.auth != nil:
-		model.app.StatusMessage = "Login required: paste " + info.auth.LoginPrompt().SecretName
-	case loginActive:
-		model.app.StatusMessage = fmt.Sprintf("Login not available for %s", model.providerName())
-	default:
-		model.app.StatusMessage = model.loadingStatus()
+	id := provider.ID(cfg.Provider)
+	if o.providerOverride != "" {
+		id = o.providerOverride
+		model.configProvider = cfg.Provider
 	}
-	model.login.active = loginActive
-	model.login.confirmOpen = loginActive
+	var fallback string
+	if _, ok := o.registry.Lookup(id); !ok && o.registry.Default() != "" {
+		fallback = fmt.Sprintf("Unknown provider %q, using %s", id, o.registry.Name(o.registry.Default()))
+		id = o.registry.Default()
+		model.configProvider = cfg.Provider
+	}
+	model.activateProvider(id)
+	if fallback != "" {
+		model.notice = fallback
+		model.app.StatusMessage = fallback
+	}
 	return model
 }
 

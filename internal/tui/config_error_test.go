@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func writeTestFile(t *testing.T, path string, data []byte) {
 func changeThemeSetting(model *Model) {
 	model.app.ActivePanel = app.ActivePanelMain
 	model.app.ViewingSettings = true
-	model.app.SettingsState.Select(intPtr(0))
+	model.app.SettingsState.Select(intPtr(slices.Index(model.settingsRows(), settingTheme)))
 	model.adjustSelectedSetting(1)
 }
 

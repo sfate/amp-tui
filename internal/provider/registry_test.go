@@ -69,3 +69,16 @@ func TestRegistryRejectsDuplicateID(t *testing.T) {
 	}()
 	reg.Register("one", "Again", stubFactory("one"))
 }
+
+func TestRegistryIDsKeepRegistrationOrder(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register("b", "B", stubFactory("b"))
+	reg.Register("a", "A", stubFactory("a"))
+	if got := reg.IDs(); len(got) != 2 || got[0] != "b" || got[1] != "a" {
+		t.Fatalf("IDs() = %v, want [b a]", got)
+	}
+	var empty *Registry
+	if got := empty.IDs(); len(got) != 0 {
+		t.Fatalf("nil registry IDs() = %v", got)
+	}
+}

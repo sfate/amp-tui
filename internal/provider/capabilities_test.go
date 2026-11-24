@@ -23,10 +23,8 @@ func (c capStream) Resolve(context.Context, string, core.Quality) (Source, error
 type capFull struct{ capStream }
 
 func (capFull) LoadRadioPage(context.Context, string, int) ([]core.Track, error) { return nil, nil }
-func (capFull) LoginPrompt() LoginPrompt                                         { return LoginPrompt{} }
-func (capFull) NormalizeSecret(input string) (string, error)                     { return input, nil }
-func (capFull) MaskSecret(string) string                                         { return "" }
-func (capFull) BrowserLogin(context.Context) (string, error)                     { return "", nil }
+func (capFull) LoginSteps() []LoginStep                                          { return nil }
+func (capFull) Submit(context.Context, string, string) (string, error)           { return "", nil }
 
 func TestCapabilitiesOfNilIsZero(t *testing.T) {
 	if got := CapabilitiesOf(nil); got != (Capabilities{}) {

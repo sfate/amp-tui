@@ -57,20 +57,30 @@ type InfiniteRadio interface {
 	LoadRadioPage(ctx context.Context, sectionID string, offset int) ([]core.Track, error)
 }
 
-// LoginPrompt holds the user-visible login texts, without trailing punctuation.
-type LoginPrompt struct {
-	ConfirmText     string
-	BrowserWaitText string
-	PasteHint       string
-	SecretName      string
+type LoginStepKind int
+
+const (
+	// LoginStepInput asks the user to type or paste a value.
+	LoginStepInput LoginStepKind = iota
+	// LoginStepBrowser starts on Enter and waits until Submit returns.
+	LoginStepBrowser
+)
+
+// LoginStep is one sign-in method; the login screen shows one step at a time and Tab moves to the next.
+type LoginStep struct {
+	ID   string
+	Kind LoginStepKind
+	// Prompt and WaitText are user-visible, without trailing punctuation.
+	Prompt   string
+	WaitText string
+	Masked   bool
 }
 
 // Authenticator works on a signed-out provider, so the login screen can use it.
 type Authenticator interface {
-	LoginPrompt() LoginPrompt
-	NormalizeSecret(input string) (string, error)
-	MaskSecret(secret string) string
-	BrowserLogin(ctx context.Context) (string, error)
+	LoginSteps() []LoginStep
+	// Submit turns the input of a step into the credential; input is empty for a browser step.
+	Submit(ctx context.Context, stepID, input string) (string, error)
 }
 
 // Config is the input of a Factory; the TUI fills it from the config file and the secrets store.

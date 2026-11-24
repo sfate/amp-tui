@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
@@ -13,6 +15,8 @@ import (
 type settingsRowID string
 
 const (
+	settingProvider    settingsRowID = "provider"
+	settingAccount     settingsRowID = "account"
 	settingTheme       settingsRowID = "theme"
 	settingVolume      settingsRowID = "volume"
 	settingQuality     settingsRowID = "quality"
@@ -22,12 +26,45 @@ const (
 	settingCompactView settingsRowID = "compact view"
 )
 
+// settingsRows puts the provider rows first, then the global rows, then rows of the active provider.
 func (m Model) settingsRows() []settingsRowID {
-	rows := []settingsRowID{settingTheme, settingVolume}
+	rows := []settingsRowID{settingProvider}
+	if m.catalog.auth != nil {
+		rows = append(rows, settingAccount)
+	}
+	rows = append(rows, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView)
 	if m.caps.QualityLadder {
 		rows = append(rows, settingQuality)
 	}
-	return append(rows, settingCrossfade, settingDuration, settingDisplay, settingCompactView)
+	return rows
+}
+
+func (m *Model) syncSettingsRows() {
+	m.app.SettingsItemCount = len(m.settingsRows())
+	if derefOrZero(m.app.SettingsState.Selected()) >= m.app.SettingsItemCount {
+		m.app.SettingsState.Select(intPtr(max(0, m.app.SettingsItemCount-1)))
+	}
+}
+
+// enterSelectedSetting toggles the session on the Account row; other rows step forward.
+func (m *Model) enterSelectedSetting() tea.Cmd {
+	// A switch stops playback, and Settings opens on this row, so Enter must not switch.
+	if m.selectedSettingRow() == settingProvider {
+		m.app.StatusMessage = "Use ←/→ to change provider"
+		return nil
+	}
+	if m.selectedSettingRow() != settingAccount {
+		return m.adjustSelectedSetting(1)
+	}
+	if m.signedIn() {
+		return m.logout()
+	}
+	m.startLogin()
+	return nil
+}
+
+func (m Model) signedIn() bool {
+	return m.catalog.auth != nil && m.provider != nil
 }
 
 func (m Model) selectedSettingRow() settingsRowID {
@@ -39,8 +76,10 @@ func (m Model) selectedSettingRow() settingsRowID {
 	return rows[idx]
 }
 
-func (m *Model) adjustSelectedSetting(direction int) {
+func (m *Model) adjustSelectedSetting(direction int) tea.Cmd {
 	switch m.selectedSettingRow() {
+	case settingProvider:
+		return m.switchProvider(direction)
 	case settingTheme:
 		m.app.Config.Theme = colorscheme.Next(m.app.Config.Theme, direction)
 		applyTheme(m.app.Config.Theme)
@@ -73,6 +112,7 @@ func (m *Model) adjustSelectedSetting(direction int) {
 		m.app.StatusMessage = fmt.Sprintf("Compact view: %s", onOff(m.app.Config.CompactView))
 		m.persistConfig()
 	}
+	return nil
 }
 
 func (m *Model) persistConfig() {
@@ -89,7 +129,11 @@ func (m *Model) writeConfig() error {
 	if m.saveConfig == nil {
 		return nil
 	}
-	return m.saveConfig(m.app.Config)
+	cfg := m.app.Config
+	if m.configProvider != "" {
+		cfg.Provider = m.configProvider
+	}
+	return m.saveConfig(cfg)
 }
 
 // storeCredential follows the writeConfig rule, so a broken config never ends up half saved.
@@ -214,6 +258,14 @@ func (m Model) renderSettingsRows() []string {
 
 func (m Model) settingsRowView(id settingsRowID) (label, value, color string) {
 	switch id {
+	case settingProvider:
+		name := m.registry.Name(m.providerID)
+		if name == "" {
+			name = m.providerName()
+		}
+		return "Provider", name, activePalette.Purple
+	case settingAccount:
+		return "Account", ternary(m.signedIn(), "Signed in", "Not signed in"), activePalette.Green
 	case settingTheme:
 		return "Theme", colorscheme.Label(m.app.Config.Theme), activePalette.Blue
 	case settingVolume:

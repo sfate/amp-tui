@@ -17,23 +17,17 @@ func bootstrapCmd(p provider.Provider) tea.Cmd {
 	return func() tea.Msg {
 		library, err := p.Bootstrap(context.Background())
 		if err != nil {
-			return bootstrapFailedMsg{err: err}
+			return bootstrapFailedMsg{source: p.ID(), err: err}
 		}
-		return bootstrapLoadedMsg{playlists: library.Playlists}
+		return bootstrapLoadedMsg{source: p.ID(), playlists: library.Playlists}
 	}
 }
 
-func validateLoginCmd(cfg provider.Config, factory provider.Factory) tea.Cmd {
+func submitLoginCmd(cfg provider.Config, authn provider.Authenticator, stepID, input string, factory provider.Factory) tea.Cmd {
 	return func() tea.Msg {
-		return signIn(cfg, factory)
-	}
-}
-
-func browserLoginCmd(cfg provider.Config, authn provider.Authenticator, factory provider.Factory) tea.Cmd {
-	return func() tea.Msg {
-		secret, err := authn.BrowserLogin(context.Background())
+		secret, err := authn.Submit(context.Background(), stepID, input)
 		if err != nil {
-			return loginFailedMsg{message: fmt.Sprintf("Browser login failed: %v", err)}
+			return loginFailedMsg{message: fmt.Sprintf("Login failed: %v", err)}
 		}
 		cfg.Credential = secret
 		return signIn(cfg, factory)
@@ -105,6 +99,7 @@ func loadSectionCmd(p provider.Provider, sec provider.Section, autoplay bool) te
 			return loadFailedMsg{message: fmt.Sprintf("%s error: %v", sec.Label, err)}
 		}
 		return collectionLoadedMsg{
+			source:   p.ID(),
 			id:       collectionID(sec.ID),
 			title:    sec.Label,
 			tracks:   tracks,
@@ -114,13 +109,13 @@ func loadSectionCmd(p provider.Provider, sec provider.Section, autoplay bool) te
 	}
 }
 
-func loadRadioPageCmd(radio provider.InfiniteRadio, sec provider.Section, offset int, autoplay bool) tea.Cmd {
+func loadRadioPageCmd(source provider.ID, radio provider.InfiniteRadio, sec provider.Section, offset int, autoplay bool) tea.Cmd {
 	return func() tea.Msg {
 		tracks, err := radio.LoadRadioPage(context.Background(), sec.ID, offset)
 		if err != nil {
 			return loadFailedMsg{message: fmt.Sprintf("%s error: %v", sec.Label, err)}
 		}
-		return collectionLoadedMsg{id: collectionID(sec.ID), title: sec.Label, tracks: tracks, isFlow: true, append: true, autoplay: autoplay}
+		return collectionLoadedMsg{source: source, id: collectionID(sec.ID), title: sec.Label, tracks: tracks, isFlow: true, append: true, autoplay: autoplay}
 	}
 }
 
@@ -133,7 +128,7 @@ func loadPlaylistCmd(p provider.Provider, id string, title string) tea.Cmd {
 		if err != nil {
 			return loadFailedMsg{message: fmt.Sprintf("Playlist error: %v", err)}
 		}
-		return collectionLoadedMsg{id: id, title: title, tracks: tracks}
+		return collectionLoadedMsg{source: p.ID(), id: id, title: title, tracks: tracks}
 	}
 }
 

@@ -7,15 +7,19 @@ import (
 	"github.com/sfate/amp-tui/internal/provider"
 )
 
+// source is the provider that answered; a message from a replaced provider is dropped.
 type bootstrapFailedMsg struct {
-	err error
+	source provider.ID
+	err    error
 }
 
 type bootstrapLoadedMsg struct {
+	source    provider.ID
 	playlists []app.Playlist
 }
 
 type collectionLoadedMsg struct {
+	source   provider.ID
 	id       string
 	title    string
 	tracks   []app.Track

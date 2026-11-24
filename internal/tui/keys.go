@@ -48,14 +48,12 @@ func (m *Model) onKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		m.app.HandleDown()
 	case "left", "h":
 		if m.app.ActivePanel == app.ActivePanelMain && m.app.ViewingSettings {
-			m.adjustSelectedSetting(-1)
-			return nil
+			return m.adjustSelectedSetting(-1)
 		}
 		m.app.HandleLeft()
 	case "right", "l":
 		if m.app.ActivePanel == app.ActivePanelMain && m.app.ViewingSettings {
-			m.adjustSelectedSetting(1)
-			return nil
+			return m.adjustSelectedSetting(1)
 		}
 		m.app.HandleRight()
 	case "enter":
@@ -229,8 +227,7 @@ func (m *Model) handleEnter() tea.Cmd {
 		return m.startTrackPlayback(m.app.QueueTracks[idx].ID)
 	case app.ActivePanelMain:
 		if m.app.ViewingSettings {
-			m.adjustSelectedSetting(1)
-			return nil
+			return m.enterSelectedSetting()
 		}
 		if m.app.ShowingSearchResult {
 			return m.handleSearchResultEnter()

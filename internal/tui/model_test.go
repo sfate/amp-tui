@@ -78,23 +78,18 @@ func (f *fakeLoader) Search(_ context.Context, query string) (provider.SearchRes
 	return f.search, nil
 }
 
-func (f *fakeLoader) LoginPrompt() provider.LoginPrompt {
-	return provider.LoginPrompt{
-		ConfirmText:     "Press Enter to open Fake login in your browser",
-		BrowserWaitText: "Complete Fake login in the browser",
-		PasteHint:       "Paste token, then press Enter",
-		SecretName:      "token",
+func (f *fakeLoader) LoginSteps() []provider.LoginStep {
+	return []provider.LoginStep{
+		{ID: "browser", Kind: provider.LoginStepBrowser, Prompt: "Press Enter to open Fake login in your browser", WaitText: "Complete Fake login in the browser"},
+		{ID: "token", Kind: provider.LoginStepInput, Prompt: "Paste token, then press Enter", Masked: true},
 	}
 }
 
-func (f *fakeLoader) NormalizeSecret(input string) (string, error) {
+func (f *fakeLoader) Submit(_ context.Context, stepID, input string) (string, error) {
+	if stepID == "browser" {
+		return "", errors.New("no browser in tests")
+	}
 	return strings.TrimSpace(input), nil
-}
-
-func (f *fakeLoader) MaskSecret(string) string { return "****" }
-
-func (f *fakeLoader) BrowserLogin(context.Context) (string, error) {
-	return "", errors.New("no browser in tests")
 }
 
 var (
@@ -134,8 +129,11 @@ func (registryProvider) ID() provider.ID { return "deezer" }
 
 func (registryProvider) Name() string { return "Deezer" }
 
-// NormalizeSecret accepts a raw token or a Cookie header that holds arl=.
-func (registryProvider) NormalizeSecret(input string) (string, error) {
+// Submit accepts a raw token or a Cookie header that holds arl=.
+func (r registryProvider) Submit(ctx context.Context, stepID, input string) (string, error) {
+	if stepID == "browser" {
+		return r.fakeLoader.Submit(ctx, stepID, input)
+	}
 	input = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(input), "Cookie:"))
 	for _, part := range strings.Split(input, ";") {
 		if value, ok := strings.CutPrefix(strings.TrimSpace(part), "arl="); ok {
@@ -296,7 +294,7 @@ func TestViewShowsLoginScreenWhenARLMissing(t *testing.T) {
 
 func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 	model := NewWithConfig(config.Default(), WithRegistry(testRegistry()))
-	model.login.confirmOpen = false
+	model.login.step = 1
 	model.factory = func(cfg provider.Config) (provider.Provider, error) {
 		if cfg.Credential != "token-value" {
 			t.Fatalf("expected normalized ARL, got %q", cfg.Credential)
@@ -342,8 +340,8 @@ func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
 	if !updated.login.active {
 		t.Fatal("expected O to enter login mode")
 	}
-	if !updated.login.confirmOpen {
-		t.Fatal("expected O to ask for browser-open confirmation")
+	if step, _ := updated.currentLoginStep(); step.Kind != provider.LoginStepBrowser {
+		t.Fatal("expected O to show the browser step first")
 	}
 	if updated.login.input != "" {
 		t.Fatalf("expected login input to be cleared, got %q", updated.login.input)
@@ -355,14 +353,10 @@ func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
 
 func TestLoginConfirmationEnterStartsBrowserLogin(t *testing.T) {
 	model := NewWithConfig(config.Default(), WithRegistry(testRegistry()))
-	model.login.confirmOpen = true
 
 	nextModel, cmd := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
 
-	if updated.login.confirmOpen {
-		t.Fatal("expected confirmation state to clear")
-	}
 	if !updated.login.loading {
 		t.Fatal("expected browser login to start loading")
 	}
@@ -712,7 +706,7 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 	}
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
-	model.app.SettingsState.Select(intPtr(2))
+	model.app.SettingsState.Select(intPtr(slices.Index(model.settingsRows(), settingQuality)))
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
@@ -745,7 +739,7 @@ func TestSettingsDisplayPersists(t *testing.T) {
 	}
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
-	model.app.SettingsState.Select(intPtr(5))
+	model.app.SettingsState.Select(intPtr(slices.Index(model.settingsRows(), settingDisplay)))
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
@@ -768,7 +762,7 @@ func TestSettingsCompactViewPersists(t *testing.T) {
 	}
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
-	model.app.SettingsState.Select(intPtr(6))
+	model.app.SettingsState.Select(intPtr(slices.Index(model.settingsRows(), settingCompactView)))
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
@@ -789,7 +783,7 @@ func TestSettingsThemePersistsAndAppliesImmediately(t *testing.T) {
 	}
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
-	model.app.SettingsState.Select(intPtr(0))
+	model.app.SettingsState.Select(intPtr(slices.Index(model.settingsRows(), settingTheme)))
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
@@ -847,7 +841,7 @@ func TestSettingsVolumeTakesEffectOnActiveSession(t *testing.T) {
 	model.app.Volume = 50
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
-	model.app.SettingsState.Select(intPtr(1))
+	model.app.SettingsState.Select(intPtr(slices.Index(model.settingsRows(), settingVolume)))
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "l"}))
 	updated := nextModel.(Model)
@@ -2884,7 +2878,7 @@ func TestBootstrapFailureRecovery(t *testing.T) {
 				t.Fatalf("loginActive = %v, want %v", updated.login.active, tc.login)
 			}
 			if tc.login {
-				if !updated.login.confirmOpen || updated.provider != nil {
+				if updated.login.step != 0 || updated.provider != nil {
 					t.Fatal("expected required login with rejected loader removed")
 				}
 				updated.cancelLogin()
