@@ -5,8 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-
-	"github.com/sfate/amp-tui/internal/auth"
 )
 
 type loginState struct {
@@ -19,19 +17,20 @@ type loginState struct {
 func (m *Model) onLoginSucceeded(msg loginSucceededMsg) tea.Cmd {
 	m.bootstrapFailed = false
 	m.app.Config = msg.cfg
-	m.loader = msg.loader
-	m.runtime = newPlayerRuntime(msg.loader)
+	m.provider = msg.provider
+	m.setCatalog(catalogInfoOf(msg.provider))
+	m.runtime = newPlayerRuntime(msg.provider)
 	m.login.active = false
 	m.login.loading = false
 	m.login.input = ""
 	m.ready = false
-	m.app.StatusMessage = "Login saved. Loading Deezer library..."
+	m.app.StatusMessage = fmt.Sprintf("Login saved. Loading %s library...", m.providerName())
 	if err := m.writeConfig(); err != nil {
 		m.app.StatusMessage = fmt.Sprintf("Login validated, but save failed: %v", err)
 		m.ready = true
 		return nil
 	}
-	return tea.Batch(bootstrapCmd(m.loader), loadingTickCmd(), m.listenMediaControlCmd())
+	return tea.Batch(bootstrapCmd(m.provider), loadingTickCmd(), m.listenMediaControlCmd())
 }
 
 func (m *Model) onLoginFailed(msg loginFailedMsg) tea.Cmd {
@@ -41,6 +40,10 @@ func (m *Model) onLoginFailed(msg loginFailedMsg) tea.Cmd {
 }
 
 func (m *Model) startLogin() {
+	if m.catalog.auth == nil {
+		m.app.StatusMessage = fmt.Sprintf("Login not available for %s", m.providerName())
+		return
+	}
 	if m.session != nil {
 		m.session.Stop()
 		m.session = nil
@@ -52,15 +55,25 @@ func (m *Model) startLogin() {
 	m.app.IsPlaying = false
 	m.app.IsSearching = false
 	m.app.SearchLoading = false
-	m.app.StatusMessage = "Press Enter to open Deezer login in your browser"
+	m.app.StatusMessage = m.catalog.auth.LoginPrompt().ConfirmText
 	m.syncMediaControl()
 }
 
 func (m *Model) handleLoginInput(msg tea.KeyPressMsg) tea.Cmd {
+	authn := m.catalog.auth
 	if m.login.loading {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return tea.Quit
+		}
+		return nil
+	}
+	if authn == nil {
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return tea.Quit
+		case "esc":
+			m.cancelLogin()
 		}
 		return nil
 	}
@@ -75,10 +88,10 @@ func (m *Model) handleLoginInput(msg tea.KeyPressMsg) tea.Cmd {
 		case "enter":
 			m.login.confirmOpen = false
 			m.login.loading = true
-			m.app.StatusMessage = "Complete Deezer login in the browser..."
-			return browserLoginCmd(m.app.Config, m.loaderFactory)
+			m.app.StatusMessage = authn.LoginPrompt().BrowserWaitText + "..."
+			return browserLoginCmd(m.app.Config, authn, m.factory)
 		case "p", "P":
-			m.app.StatusMessage = "Paste ARL or Cookie header, then press Enter"
+			m.app.StatusMessage = authn.LoginPrompt().PasteHint
 			return nil
 		}
 		return nil
@@ -100,23 +113,23 @@ func (m *Model) handleLoginInput(msg tea.KeyPressMsg) tea.Cmd {
 	case "enter":
 		input := strings.TrimSpace(m.login.input)
 		if input == "" {
-			m.app.StatusMessage = "Paste ARL or Cookie header, then press Enter"
+			m.app.StatusMessage = authn.LoginPrompt().PasteHint
 			return nil
 		}
-		arl, err := auth.NormalizeARL(input)
+		secret, err := authn.NormalizeSecret(input)
 		if err != nil {
 			m.app.StatusMessage = fmt.Sprintf("Login input error: %v", err)
 			return nil
 		}
 		cfg := m.app.Config
-		cfg.ARL = arl
+		cfg.ARL = secret
 		m.login.loading = true
-		m.app.StatusMessage = fmt.Sprintf("Validating login %s...", auth.MaskARL(arl))
-		return validateLoginCmd(cfg, m.loaderFactory)
+		m.app.StatusMessage = fmt.Sprintf("Validating login %s...", authn.MaskSecret(secret))
+		return validateLoginCmd(cfg, m.factory)
 	case "o", "O":
 		m.login.confirmOpen = true
 		m.login.input = ""
-		m.app.StatusMessage = "Press Enter to open Deezer login in your browser"
+		m.app.StatusMessage = authn.LoginPrompt().ConfirmText
 		return nil
 	}
 
@@ -135,51 +148,55 @@ func (m *Model) cancelLogin() {
 	if m.bootstrapFailed {
 		m.app.StatusMessage = "Library could not load. Press Enter to retry or O to sign in"
 	}
-	if m.loader == nil {
+	if m.provider == nil {
 		m.login.active = true
 		m.login.confirmOpen = true
-		m.app.StatusMessage = "Login is required before loading Deezer"
+		m.app.StatusMessage = fmt.Sprintf("Login is required before loading %s", m.providerName())
 	}
 }
 
 func (m Model) renderLoginScreen() string {
-	status := strings.TrimSpace(m.app.StatusMessage)
-	if status == "" {
-		status = "Press Enter to open Deezer login in your browser"
-	}
-
 	lines := []string{
 		centerText(paint("amp-tui", activePalette.Purple, ""), m.width),
 		"",
-		centerText(paint("Sign in with Deezer", activePalette.TextStrong, ""), m.width),
+		centerText(paint("Sign in with "+m.providerName(), activePalette.TextStrong, ""), m.width),
 	}
+	lines = append(lines, m.loginBodyLines()...)
 
-	switch {
-	case m.login.loading:
-		lines = append(lines,
-			centerText(paint("Complete Deezer login in the browser.", activePalette.Aqua, ""), m.width),
-			centerText(paint("This window will continue automatically after login succeeds.", activePalette.TextMuted, ""), m.width),
-		)
-	case m.login.confirmOpen:
-		lines = append(lines,
-			centerText(paint("Press Enter to open Deezer login in your browser.", activePalette.Text, ""), m.width),
-			centerText(paint("Press Esc to return if you already have a working session.", activePalette.TextMuted, ""), m.width),
-		)
-	default:
-		input := auth.MaskARL(m.login.input)
-		if strings.Contains(m.login.input, "arl=") {
-			input = "Cookie header pasted"
-		}
-		if input == "" {
-			input = "Waiting for login input"
-		}
-		lines = append(lines,
-			centerText(paint("Paste ARL or Cookie header, then press Enter.", activePalette.Text, ""), m.width),
-			centerText(paint("Press Ctrl+U to clear, Esc to return.", activePalette.TextMuted, ""), m.width),
-			"",
-			centerText(paint(input, activePalette.Aqua, ""), m.width),
-		)
+	status := strings.TrimSpace(m.app.StatusMessage)
+	if status == "" && m.catalog.auth != nil {
+		status = m.catalog.auth.LoginPrompt().ConfirmText
 	}
 	lines = append(lines, "", centerText(paint(status, activePalette.TextMuted, ""), m.width))
 	return verticalCenter(strings.Join(lines, "\n"), m.height)
+}
+
+func (m Model) loginBodyLines() []string {
+	authn := m.catalog.auth
+	if authn == nil {
+		return []string{centerText(paint(fmt.Sprintf("Login not available for %s.", m.providerName()), activePalette.Text, ""), m.width)}
+	}
+	prompt := authn.LoginPrompt()
+	switch {
+	case m.login.loading:
+		return []string{
+			centerText(paint(prompt.BrowserWaitText+".", activePalette.Aqua, ""), m.width),
+			centerText(paint("This window will continue automatically after login succeeds.", activePalette.TextMuted, ""), m.width),
+		}
+	case m.login.confirmOpen:
+		return []string{
+			centerText(paint(prompt.ConfirmText+".", activePalette.Text, ""), m.width),
+			centerText(paint("Press Esc to return if you already have a working session.", activePalette.TextMuted, ""), m.width),
+		}
+	}
+	input := authn.MaskSecret(m.login.input)
+	if input == "" {
+		input = "Waiting for login input"
+	}
+	return []string{
+		centerText(paint(prompt.PasteHint+".", activePalette.Text, ""), m.width),
+		centerText(paint("Press Ctrl+U to clear, Esc to return.", activePalette.TextMuted, ""), m.width),
+		"",
+		centerText(paint(input, activePalette.Aqua, ""), m.width),
+	}
 }

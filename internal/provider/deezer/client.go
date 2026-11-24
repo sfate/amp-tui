@@ -16,10 +16,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
-// ErrUnauthenticated indicates that the saved session has no authenticated user.
-var ErrUnauthenticated = errors.New("deezer session is not authenticated; please sign in again")
+// ErrUnauthenticated wraps provider.ErrUnauthenticated so the TUI can match it.
+var ErrUnauthenticated = fmt.Errorf("deezer %w", provider.ErrUnauthenticated)
 
 const (
 	defaultGatewayURL = "https://www.deezer.com/ajax/gw-light.php"

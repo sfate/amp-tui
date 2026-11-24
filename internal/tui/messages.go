@@ -3,8 +3,9 @@ package tui
 import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/config"
-	"github.com/sfate/amp-tui/internal/deezer"
 	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type bootstrapFailedMsg struct {
@@ -102,8 +103,8 @@ type scheduledPlaybackMsg struct {
 }
 
 type loginSucceededMsg struct {
-	cfg    config.Config
-	loader Loader
+	cfg      config.Config
+	provider provider.Provider
 }
 
 type loginFailedMsg struct {

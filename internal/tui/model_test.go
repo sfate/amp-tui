@@ -17,48 +17,90 @@ import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
-	"github.com/sfate/amp-tui/internal/deezer"
 	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type fakeLoader struct {
-	bootstrap BootstrapData
+	bootstrap provider.Library
 	home      []app.Track
 	flow      []app.Track
 	explore   []app.Track
 	favorites []app.Track
 	playlist  []app.Track
-	search    SearchData
+	search    provider.SearchResult
 	queries   []string
 }
 
-func (f *fakeLoader) Bootstrap(context.Context) (BootstrapData, error) {
+func (f *fakeLoader) ID() provider.ID { return "fake" }
+
+func (f *fakeLoader) Name() string { return "Fake" }
+
+func (f *fakeLoader) Sections() []provider.Section {
+	return []provider.Section{
+		{ID: "home", Label: "Home", Kind: provider.SectionTracks},
+		{ID: "flow", Label: "Flow", Kind: provider.SectionRadio},
+		{ID: "explore", Label: "Explore", Kind: provider.SectionTracks},
+		{ID: "favorites", Label: "Favorites", Kind: provider.SectionFavorites},
+	}
+}
+
+func (f *fakeLoader) Bootstrap(context.Context) (provider.Library, error) {
 	return f.bootstrap, nil
 }
 
-func (f *fakeLoader) LoadHome(context.Context) ([]app.Track, error) {
-	return append([]app.Track(nil), f.home...), nil
+func (f *fakeLoader) LoadSection(_ context.Context, sectionID string) ([]app.Track, error) {
+	switch sectionID {
+	case "home":
+		return append([]app.Track(nil), f.home...), nil
+	case "flow":
+		return append([]app.Track(nil), f.flow...), nil
+	case "explore":
+		return append([]app.Track(nil), f.explore...), nil
+	case "favorites":
+		return append([]app.Track(nil), f.favorites...), nil
+	}
+	return nil, fmt.Errorf("unknown section %q", sectionID)
 }
 
-func (f *fakeLoader) LoadFlow(context.Context, int) ([]app.Track, error) {
+func (f *fakeLoader) LoadRadioPage(context.Context, string, int) ([]app.Track, error) {
 	return append([]app.Track(nil), f.flow...), nil
-}
-
-func (f *fakeLoader) LoadExplore(context.Context) ([]app.Track, error) {
-	return append([]app.Track(nil), f.explore...), nil
-}
-
-func (f *fakeLoader) LoadFavorites(context.Context) ([]app.Track, error) {
-	return append([]app.Track(nil), f.favorites...), nil
 }
 
 func (f *fakeLoader) LoadPlaylist(context.Context, string) ([]app.Track, error) {
 	return append([]app.Track(nil), f.playlist...), nil
 }
 
-func (f *fakeLoader) Search(_ context.Context, query string) (SearchData, error) {
+func (f *fakeLoader) Search(_ context.Context, query string) (provider.SearchResult, error) {
 	f.queries = append(f.queries, query)
 	return f.search, nil
+}
+
+func (f *fakeLoader) LoginPrompt() provider.LoginPrompt {
+	return provider.LoginPrompt{
+		ConfirmText:     "Press Enter to open Fake login in your browser",
+		BrowserWaitText: "Complete Fake login in the browser",
+		PasteHint:       "Paste token, then press Enter",
+		SecretName:      "token",
+	}
+}
+
+func (f *fakeLoader) NormalizeSecret(input string) (string, error) {
+	return strings.TrimSpace(input), nil
+}
+
+func (f *fakeLoader) MaskSecret(string) string { return "****" }
+
+func (f *fakeLoader) BrowserLogin(context.Context) (string, error) {
+	return "", errors.New("no browser in tests")
+}
+
+// testRegistry wires the real Deezer provider, which works signed out without network.
+func testRegistry() *provider.Registry {
+	reg := provider.NewRegistry()
+	deezer.Register(reg)
+	return reg
 }
 
 func firstNonTickMsg(cmd tea.Cmd) tea.Msg {
@@ -158,7 +200,7 @@ func firstBatchMessage(cmd tea.Cmd) tea.Msg {
 }
 
 func TestViewUsesAltScreen(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.height = 40
 	model.ready = true
@@ -173,7 +215,7 @@ func TestViewUsesAltScreen(t *testing.T) {
 }
 
 func TestViewShowsLoadingLogoBeforeInitialCollectionLoad(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.height = 40
 	model.ready = false
@@ -185,7 +227,7 @@ func TestViewShowsLoadingLogoBeforeInitialCollectionLoad(t *testing.T) {
 }
 
 func TestViewShowsLoginScreenWhenARLMissing(t *testing.T) {
-	model := NewWithConfig(config.Default())
+	model := NewWithConfig(config.Default(), WithRegistry(testRegistry()))
 	model.width = 120
 	model.height = 40
 
@@ -199,13 +241,13 @@ func TestViewShowsLoginScreenWhenARLMissing(t *testing.T) {
 }
 
 func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
-	model := NewWithConfig(config.Default())
+	model := NewWithConfig(config.Default(), WithRegistry(testRegistry()))
 	model.login.confirmOpen = false
-	model.loaderFactory = func(cfg config.Config) (Loader, error) {
+	model.factory = func(cfg config.Config) (provider.Provider, error) {
 		if cfg.ARL != "token-value" {
 			t.Fatalf("expected normalized ARL, got %q", cfg.ARL)
 		}
-		return &fakeLoader{bootstrap: BootstrapData{Playlists: []app.Playlist{{ID: "1", Title: "Playlist"}}}}, nil
+		return &fakeLoader{bootstrap: provider.Library{Playlists: []app.Playlist{{ID: "1", Title: "Playlist"}}}}, nil
 	}
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
@@ -239,7 +281,7 @@ func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
 	cfg := config.Default()
 	cfg.ARL = "existing-token"
-	model := NewWithLoaderAndRuntime(cfg, &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, &fakePlaybackRuntime{})
 	model.ready = true
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "O"}))
@@ -260,7 +302,7 @@ func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
 }
 
 func TestLoginConfirmationEnterStartsBrowserLogin(t *testing.T) {
-	model := NewWithConfig(config.Default())
+	model := NewWithConfig(config.Default(), WithRegistry(testRegistry()))
 	model.login.confirmOpen = true
 
 	nextModel, cmd := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
@@ -278,7 +320,7 @@ func TestLoginConfirmationEnterStartsBrowserLogin(t *testing.T) {
 }
 
 func TestInitialLoadFailureLeavesLoadingScreen(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.ready = false
 
 	nextModel, _ := model.Update(loadFailedMsg{message: "Bootstrap error: denied"})
@@ -304,7 +346,7 @@ func TestTruncatePreservesUTF8(t *testing.T) {
 func TestFavoritesDefaultToNewestAddedFirstAndToggleSort(t *testing.T) {
 	old := int64(1000)
 	newer := int64(3000)
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.ready = true
 	model.loadCollection("__favorites__", "Favorites", []app.Track{
 		{ID: "old", Title: "Old", Artist: "A", AddedAtMS: &old},
@@ -326,7 +368,7 @@ func TestFavoritesDefaultToNewestAddedFirstAndToggleSort(t *testing.T) {
 }
 
 func TestViewShowsProgressBar(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.height = 40
 	model.ready = true
@@ -388,7 +430,7 @@ func TestViewShowsProgressBar(t *testing.T) {
 }
 
 func TestMiddleColumnsUseEqualWidths(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.height = 40
 	model.ready = true
@@ -406,7 +448,7 @@ func TestMiddleColumnsUseEqualWidths(t *testing.T) {
 }
 
 func TestQueueRowsUseQueuePanelWidth(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ActivePanel = app.ActivePanelQueue
 	model.app.QueueTracks = []app.Track{{
 		ID:     "1",
@@ -423,7 +465,7 @@ func TestQueueRowsUseQueuePanelWidth(t *testing.T) {
 }
 
 func TestQueueRowsRenderPrebufferIndicators(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -449,7 +491,7 @@ func TestQueueRowsRenderPrebufferIndicators(t *testing.T) {
 }
 
 func TestSettingsViewShowsEditableSettingsWithoutDiscord(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
 	model.app.SettingsState.Select(intPtr(0))
@@ -466,7 +508,7 @@ func TestSettingsViewShowsEditableSettingsWithoutDiscord(t *testing.T) {
 }
 
 func TestEnterOnSettingsNavigationOpensSettings(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ActivePanel = app.ActivePanelNavigation
 	model.app.NavState.Select(intPtr(4))
 
@@ -488,7 +530,7 @@ func TestEnterOnSettingsNavigationOpensSettings(t *testing.T) {
 }
 
 func TestKeyboardNavigationDownToSettingsOpensSettings(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ActivePanel = app.ActivePanelNavigation
 
 	for i := 0; i < 4; i++ {
@@ -510,7 +552,7 @@ func TestKeyboardNavigationDownToSettingsOpensSettings(t *testing.T) {
 }
 
 func TestSpaceOnSettingsNavigationOpensSettings(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ActivePanel = app.ActivePanelNavigation
 	model.app.NavState.Select(intPtr(4))
 
@@ -529,7 +571,7 @@ func TestSpaceOnSettingsNavigationOpensSettings(t *testing.T) {
 }
 
 func TestLibraryPlaylistsScrollUnderFixedBrowseRows(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	for i := 1; i <= 8; i++ {
 		model.app.Playlists = append(model.app.Playlists, app.Playlist{
 			ID:    fmt.Sprintf("pl-%02d", i),
@@ -553,7 +595,7 @@ func TestLibraryPlaylistsScrollUnderFixedBrowseRows(t *testing.T) {
 }
 
 func TestQueueScrollsTracksWithoutDroppingQueueInfo(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	for i := 1; i <= 12; i++ {
 		model.app.QueueTracks = append(model.app.QueueTracks, app.Track{
 			ID:     fmt.Sprintf("%02d", i),
@@ -581,7 +623,7 @@ func TestQueueScrollsTracksWithoutDroppingQueueInfo(t *testing.T) {
 }
 
 func TestCollectionTracksScrollUnderFixedHeader(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ActivePanel = app.ActivePanelMain
 	for i := 1; i <= 12; i++ {
 		model.app.CurrentTracks = append(model.app.CurrentTracks, app.Track{
@@ -609,7 +651,7 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 	cfg := config.Default()
 	cfg.DefaultQuality = config.AudioQuality320
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(cfg, &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, runtime)
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)
@@ -642,7 +684,7 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 func TestSettingsDisplayPersists(t *testing.T) {
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeEqualizer
-	model := NewWithLoader(cfg, &fakeLoader{})
+	model := NewWithProvider(cfg, &fakeLoader{})
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)
@@ -665,7 +707,7 @@ func TestSettingsDisplayPersists(t *testing.T) {
 func TestSettingsCompactViewPersists(t *testing.T) {
 	cfg := config.Default()
 	cfg.CompactView = true
-	model := NewWithLoader(cfg, &fakeLoader{})
+	model := NewWithProvider(cfg, &fakeLoader{})
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)
@@ -686,7 +728,7 @@ func TestSettingsCompactViewPersists(t *testing.T) {
 }
 
 func TestSettingsThemePersistsAndAppliesImmediately(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)
@@ -710,7 +752,7 @@ func TestSettingsThemePersistsAndAppliesImmediately(t *testing.T) {
 }
 
 func TestEscFocusesLibraryAndKeepsCollection(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ViewingSettings = true
 	model.app.ActivePanel = app.ActivePanelMain
 	model.app.CurrentPlaylistID = stringPtr("__home__")
@@ -730,7 +772,7 @@ func TestEscFocusesLibraryAndKeepsCollection(t *testing.T) {
 }
 
 func TestEscWhileSearchingFocusesLibrary(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.IsSearching = true
 	model.app.ActivePanel = app.ActivePanelSearch
 	model.app.SearchQuery = "artist"
@@ -746,7 +788,7 @@ func TestEscWhileSearchingFocusesLibrary(t *testing.T) {
 }
 
 func TestSettingsVolumeTakesEffectOnActiveSession(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	session := &fakePlaybackSession{}
 	model.session = session
 	model.app.Volume = 50
@@ -766,7 +808,7 @@ func TestSettingsVolumeTakesEffectOnActiveSession(t *testing.T) {
 
 func TestCrossfadeSettingUsesFadeStopWhenReplacingSession(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.session = session
 	model.app.Config.CrossfadeEnabled = true
 	model.app.Config.CrossfadeDurationMS = 3000
@@ -788,7 +830,7 @@ func TestCrossfadeSettingUsesFadeStopWhenReplacingSession(t *testing.T) {
 
 func TestSpacebarStartsSelectedTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.width = 120
 	model.height = 40
 	model.app.ActivePanel = app.ActivePanelMain
@@ -814,7 +856,7 @@ func TestSpacebarStartsSelectedTrack(t *testing.T) {
 }
 
 func TestPlaybackStartHonorsPendingPause(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	session := &fakePlaybackSession{}
 	model.nextPlaybackID = 1
 	model.pauseRequested = true
@@ -833,7 +875,7 @@ func TestPlaybackStartHonorsPendingPause(t *testing.T) {
 }
 
 func TestDisplayStateUsesStatusMessage(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.StatusMessage = "Buffering..."
 	if got := model.displayState(); got != "Buffering" {
 		t.Fatalf("expected Buffering state, got %q", got)
@@ -841,7 +883,7 @@ func TestDisplayStateUsesStatusMessage(t *testing.T) {
 }
 
 func TestBufferingProgressShowsPercentageAndStage(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.currentPlayID = 7
 
 	nextModel, _ := model.Update(bufferingProgressMsg{playID: 7, percent: 42, stage: player.BufferingStageDownloading})
@@ -862,7 +904,7 @@ func TestBufferingProgressShowsPercentageAndStage(t *testing.T) {
 }
 
 func TestBufferingProgressKeepsListeningForTrackChanged(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.currentPlayID = 7
 	model.playbackEvents <- playbackTrackChangedMsg{
 		playID:  7,
@@ -887,7 +929,7 @@ func TestBufferingProgressKeepsListeningForTrackChanged(t *testing.T) {
 }
 
 func TestLateBufferingProgressDoesNotOverridePlayingState(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.currentPlayID = 7
 	model.app.IsPlaying = true
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "Song", Artist: "Artist"}
@@ -912,7 +954,7 @@ func TestLateBufferingProgressDoesNotOverridePlayingState(t *testing.T) {
 }
 
 func TestTrackChangedStartsPlayingStateBeforeProgressEvent(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.currentPlayID = 7
 	model.app.IsPlaying = true
 
@@ -941,7 +983,7 @@ func TestTrackChangedStartsPlayingStateBeforeProgressEvent(t *testing.T) {
 }
 
 func TestStalePlaybackEventsKeepListenerAlive(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.currentPlayID = 2
 	model.nextPlaybackID = 2
 	model.playbackEvents <- playbackTrackChangedMsg{
@@ -986,12 +1028,12 @@ func TestRenderArtworkANSIProducesBlockGrid(t *testing.T) {
 
 func TestInitBootstrapsPlaylistsAndLoadsHome(t *testing.T) {
 	loader := &fakeLoader{
-		bootstrap: BootstrapData{
+		bootstrap: provider.Library{
 			Playlists: []app.Playlist{{ID: "1", Title: "Daily"}},
 		},
 		home: []app.Track{{ID: "11", Title: "Track", Artist: "Artist"}},
 	}
-	model := NewWithLoader(config.Default(), loader)
+	model := NewWithProvider(config.Default(), loader)
 	model.width = 120
 	model.height = 40
 
@@ -1045,7 +1087,7 @@ func TestEnterOnFlowLoadsQueueAndMarksFlow(t *testing.T) {
 		},
 	}
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), loader, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), loader, runtime)
 	model.width = 120
 	model.height = 40
 	model.app.NavState.Select(intPtr(1))
@@ -1087,7 +1129,7 @@ func TestEnterOnFlowLoadsQueueAndMarksFlow(t *testing.T) {
 }
 
 func TestTogglePlayPauseControlsSession(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	session := &fakePlaybackSession{}
 	model.session = session
 	model.app.IsPlaying = true
@@ -1105,7 +1147,7 @@ func TestTogglePlayPauseControlsSession(t *testing.T) {
 
 func TestMediaControlToggleControlsSession(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	session := &fakePlaybackSession{}
 	model.session = session
 	model.app.IsPlaying = true
@@ -1122,7 +1164,7 @@ func TestMediaControlToggleControlsSession(t *testing.T) {
 
 func TestMediaControlSetPositionSeeksCurrentTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = deezer.AudioQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1148,7 +1190,7 @@ func TestMediaControlSetPositionSeeksCurrentTrack(t *testing.T) {
 
 func TestPlaybackTrackChangedSyncsMediaControlMetadata(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
 	durationSecs := uint64(180)
@@ -1175,7 +1217,7 @@ func TestPlaybackTrackChangedSyncsMediaControlMetadata(t *testing.T) {
 }
 
 func TestRememberArtworkEvictsOldEntries(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), nil, nil)
+	model := NewWithProviderAndRuntime(config.Default(), nil, nil)
 	for i := 0; i < artworkCacheLimit+5; i++ {
 		url := fmt.Sprintf("https://example.invalid/art-%02d.jpg", i)
 		model.rememberArtwork(url, fmt.Sprintf("art-%02d", i))
@@ -1194,7 +1236,7 @@ func TestRememberArtworkEvictsOldEntries(t *testing.T) {
 }
 
 func TestRepeatKeyCyclesRepeatMode(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "r"}))
 	updated := nextModel.(Model)
@@ -1217,7 +1259,7 @@ func TestRepeatKeyCyclesRepeatMode(t *testing.T) {
 
 func TestSeekForwardRestartsCurrentTrackAtNewPosition(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = deezer.AudioQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1246,7 +1288,7 @@ func TestSeekForwardRestartsCurrentTrackAtNewPosition(t *testing.T) {
 
 func TestSeekBackwardClampsToStart(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = deezer.AudioQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1271,7 +1313,7 @@ func TestSeekBackwardClampsToStart(t *testing.T) {
 }
 
 func TestSeekIsIgnoredForFlacPlayback(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.currentTrackID = "track-1"
 	model.currentQuality = deezer.AudioQualityFlac
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1295,7 +1337,7 @@ func TestSeekIsIgnoredForFlacPlayback(t *testing.T) {
 
 func TestQualitySwitchDownPreservesPosition(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = deezer.AudioQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1324,7 +1366,7 @@ func TestQualitySwitchDownPreservesPosition(t *testing.T) {
 
 func TestQualitySwitchToFlacRestartsAtBeginning(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = deezer.AudioQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1353,7 +1395,7 @@ func TestQualitySwitchToFlacRestartsAtBeginning(t *testing.T) {
 
 func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1400,7 +1442,7 @@ func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 
 func TestPlaybackFinishedAdvancesQueue(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1420,7 +1462,7 @@ func TestPlaybackFinishedAdvancesQueue(t *testing.T) {
 
 func TestPlaybackFinishedRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1447,7 +1489,7 @@ func TestPlaybackFinishedRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 
 func TestPlaybackFinishedWrapsQueueInRepeatAllMode(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1476,7 +1518,7 @@ func TestPlaybackFinishedLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 	loader := &fakeLoader{
 		flow: []app.Track{{ID: "3", Title: "Three", Artist: "C"}},
 	}
-	model := NewWithLoaderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1502,7 +1544,7 @@ func TestPlaybackFinishedLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 
 func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1538,7 +1580,7 @@ func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
 
 func TestCrossfadeProgressRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1567,7 +1609,7 @@ func TestCrossfadeProgressRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 
 func TestCrossfadeProgressWrapsQueueInRepeatAllMode(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1599,7 +1641,7 @@ func TestCrossfadeProgressLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 		flow: []app.Track{{ID: "3", Title: "Three", Artist: "C"}},
 	}
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithLoaderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1629,7 +1671,7 @@ func TestCrossfadeProgressLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 }
 
 func TestCrossfadeProgressDoesNothingWhenDisabled(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.session = &fakePlaybackSession{}
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1653,7 +1695,7 @@ func TestCrossfadeProgressDoesNothingWhenDisabled(t *testing.T) {
 }
 
 func TestStartingNextTrackClearsStaleNowPlayingAndArtwork(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "Old Song", Artist: "A"},
 		{ID: "2", Title: "New Song", Artist: "B"},
@@ -1685,7 +1727,7 @@ func TestStartingNextTrackClearsStaleNowPlayingAndArtwork(t *testing.T) {
 }
 
 func TestStatusLineRendersDefaultArtworkWhenArtworkMissing(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "Song", Artist: "Artist"}
 	model.artwork.ansi = ""
@@ -1697,7 +1739,7 @@ func TestStatusLineRendersDefaultArtworkWhenArtworkMissing(t *testing.T) {
 }
 
 func TestStatusAreaRendersDisplayPanelWhenEnabled(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.app.IsPlaying = true
 	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
@@ -1716,7 +1758,7 @@ func TestStatusAreaRendersDisplayPanelWhenEnabled(t *testing.T) {
 }
 
 func TestStatusAreaHidesDisplayPanelWhenDisabled(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.app.Config.DisplayMode = config.DisplayModeOff
 	model.app.Config.DisplayEnabled = false
@@ -1730,7 +1772,7 @@ func TestStatusAreaHidesDisplayPanelWhenDisabled(t *testing.T) {
 }
 
 func TestViewUsesCompactViewWhenQueueWouldBeTooShort(t *testing.T) {
-	model := NewWithLoader(config.Default(), nil)
+	model := NewWithProvider(config.Default(), nil)
 	model.width = 120
 	model.height = 30
 	for i := 1; i <= 8; i++ {
@@ -1772,7 +1814,7 @@ func TestViewUsesCompactViewWhenQueueWouldBeTooShort(t *testing.T) {
 func TestViewKeepsCollectionAndDisplayWhenCompactViewDisabled(t *testing.T) {
 	cfg := config.Default()
 	cfg.CompactView = false
-	model := NewWithLoader(cfg, nil)
+	model := NewWithProvider(cfg, nil)
 	model.width = 120
 	model.height = 30
 	for i := 1; i <= 8; i++ {
@@ -1797,7 +1839,7 @@ func TestViewKeepsCollectionAndDisplayWhenCompactViewDisabled(t *testing.T) {
 }
 
 func TestCompactViewRendersEqualizerInsideStatusWhenHeightAllows(t *testing.T) {
-	model := NewWithLoader(config.Default(), nil)
+	model := NewWithProvider(config.Default(), nil)
 	model.width = 120
 	model.height = 30
 	model.app.IsPlaying = true
@@ -1832,7 +1874,7 @@ func TestCompactViewRendersEqualizerInsideStatusWhenHeightAllows(t *testing.T) {
 }
 
 func TestCompactStatusColumnUsesFullHeight(t *testing.T) {
-	model := NewWithLoader(config.Default(), nil)
+	model := NewWithProvider(config.Default(), nil)
 	model.app.IsPlaying = true
 	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
 
@@ -1843,7 +1885,7 @@ func TestCompactStatusColumnUsesFullHeight(t *testing.T) {
 }
 
 func TestStatusProgressFitsWithoutEllipsis(t *testing.T) {
-	model := NewWithLoader(config.Default(), nil)
+	model := NewWithProvider(config.Default(), nil)
 	model.app.NowPlaying = &app.NowPlaying{
 		ID:        "1",
 		Title:     "DLZ",
@@ -1862,7 +1904,7 @@ func TestStatusProgressFitsWithoutEllipsis(t *testing.T) {
 }
 
 func TestDisplayPanelRendersModes(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.IsPlaying = true
 	model.visualizer.bands = []uint8{1, 3, 5, 7, 8, 6, 4, 2}
 
@@ -1911,14 +1953,14 @@ func TestDisplayModeCycleVisitsEveryMode(t *testing.T) {
 }
 
 func TestViewUsesAlternateScreen(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	if view := model.View(); !view.AltScreen {
 		t.Fatal("expected Bubble Tea view to use the alternate screen buffer")
 	}
 }
 
 func TestEqualizerPeaksRiseAndFall(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 
 	model.updateVisualizerPeaks([]uint8{8, 4})
 	if len(model.visualizer.peaks) != 2 || model.visualizer.peaks[0] != 1 {
@@ -1944,7 +1986,7 @@ func TestEqualizerRendersPeakCaps(t *testing.T) {
 }
 
 func TestStatusLineDoesNotIncludeVisualizer(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.width = 120
 	model.app.IsPlaying = true
 	model.visualizer.bands = []uint8{1, 2, 3, 4, 5, 6, 7, 8}
@@ -1959,7 +2001,7 @@ func TestPlaybackDisablesAudioBandsWhenDisplayModeOff(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeOff
-	model := NewWithLoaderAndRuntime(cfg, &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, runtime)
 
 	cmd := model.startTrackPlayback("1")
 	if cmd == nil {
@@ -1979,7 +2021,7 @@ func TestPlaybackEnablesAudioBandsWhenDisplayModeOn(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeEqualizer
-	model := NewWithLoaderAndRuntime(cfg, &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, runtime)
 
 	cmd := model.startTrackPlayback("1")
 	if cmd == nil {
@@ -1996,7 +2038,7 @@ func TestPlaybackEnablesAudioBandsWhenDisplayModeOn(t *testing.T) {
 }
 
 func TestArtworkSlotDoesNotLeakCachedThemeBackground(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	applyTheme(colorscheme.Aetheria)
 
 	slot := model.renderArtworkSlot("X\x1b[39;48;2;40;40;40m", 16, 9)
@@ -2010,7 +2052,7 @@ func TestArtworkSlotDoesNotLeakCachedThemeBackground(t *testing.T) {
 
 func TestSelectingTrackInCurrentCollectionKeepsExistingQueue(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.ActivePanel = app.ActivePanelMain
 	model.app.CurrentTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
@@ -2042,7 +2084,7 @@ func TestSelectingTrackInCurrentCollectionKeepsExistingQueue(t *testing.T) {
 
 func TestPlaybackProgressPrebuffersNextQueuedTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentPlayID = 3
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2065,7 +2107,7 @@ func TestPlaybackProgressPrebuffersNextQueuedTrack(t *testing.T) {
 
 func TestHandleNextWrapsAtQueueEndWhenRepeatAllEnabled(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -2092,7 +2134,7 @@ func TestHandleNextWrapsAtQueueEndWhenRepeatAllEnabled(t *testing.T) {
 }
 
 func TestLoadCollectionKeepsActiveFlowQueueState(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.ready = true
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 12
@@ -2110,7 +2152,7 @@ func TestLoadCollectionKeepsActiveFlowQueueState(t *testing.T) {
 }
 
 func TestSearchBackspaceRemovesWholeRune(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.IsSearching = true
 	model.app.SearchQuery = "Beyoncé"
 
@@ -2126,11 +2168,11 @@ func TestSearchBackspaceRemovesWholeRune(t *testing.T) {
 
 func TestEnterSearchStartsLoadingAndLeavesInputMode(t *testing.T) {
 	loader := &fakeLoader{
-		search: SearchData{
+		search: provider.SearchResult{
 			Tracks: []app.Track{{ID: "1", Title: "One", Artist: "A"}},
 		},
 	}
-	model := NewWithLoader(config.Default(), loader)
+	model := NewWithProvider(config.Default(), loader)
 	model.width = 100
 	model.height = 36
 	model.app.IsSearching = true
@@ -2164,7 +2206,7 @@ func TestEnterSearchStartsLoadingAndLeavesInputMode(t *testing.T) {
 }
 
 func TestStartSearchWithoutLoaderDoesNotEnterLoadingState(t *testing.T) {
-	model := NewWithLoader(config.Default(), nil)
+	model := NewWithProvider(config.Default(), nil)
 	model.app.IsSearching = true
 	model.app.SearchQuery = "artist"
 
@@ -2185,7 +2227,7 @@ func TestStartSearchWithoutLoaderDoesNotEnterLoadingState(t *testing.T) {
 }
 
 func TestStartSearchClearsStaleSearchResults(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryPlaylists
 	model.app.CurrentTracks = []app.Track{{ID: "old-track", Title: "Old", Artist: "A"}}
@@ -2210,7 +2252,7 @@ func TestStartSearchClearsStaleSearchResults(t *testing.T) {
 }
 
 func TestSearchLoadingTickUsesSearchFrameCount(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.ready = true
 	model.app.SearchLoading = true
 	model.loadingFrame = len(loadingHeartFrames) - 1
@@ -2227,7 +2269,7 @@ func TestSearchLoadingTickUsesSearchFrameCount(t *testing.T) {
 }
 
 func TestStaleSearchResultsAreIgnored(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 
 	_ = model.startSearch("old")
 	oldID := model.search.activeID
@@ -2252,7 +2294,7 @@ func TestStaleSearchResultsAreIgnored(t *testing.T) {
 }
 
 func TestCollectionLoadInvalidatesPendingSearch(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	_ = model.startSearch("old")
 	searchID := model.search.activeID
 
@@ -2282,7 +2324,7 @@ func TestCollectionLoadInvalidatesPendingSearch(t *testing.T) {
 }
 
 func TestFlowLoadInvalidatesPendingSearch(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	_ = model.startSearch("old")
 	searchID := model.search.activeID
 
@@ -2318,7 +2360,7 @@ func TestFlowLoadInvalidatesPendingSearch(t *testing.T) {
 
 func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentPlayID = 3
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2341,7 +2383,7 @@ func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
 
 func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentPlayID = 7
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2367,7 +2409,7 @@ func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
 }
 
 func TestReadyPrebufferStatusesEvictOldestWhenCacheLimitIsReached(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	for i := 1; i <= prebufferCacheStatusLimit+1; i++ {
 		model.setPrebufferStatus(fmt.Sprintf("%d", i), deezer.AudioQuality320, PrebufferStatusReady)
 	}
@@ -2381,7 +2423,7 @@ func TestReadyPrebufferStatusesEvictOldestWhenCacheLimitIsReached(t *testing.T) 
 
 func TestCollectionLoadPrebuffersFirstTwentyQueuedTracks(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	tracks := make([]app.Track, 25)
 	want := make([]string, 20)
 	for i := range tracks {
@@ -2404,7 +2446,7 @@ func TestCollectionLoadPrebuffersFirstTwentyQueuedTracks(t *testing.T) {
 
 func TestLastFlowTrackStartsLoadingNextBatchForPrebuffer(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 2
 	model.app.QueueTracks = []app.Track{
@@ -2427,7 +2469,7 @@ func TestLastFlowTrackStartsLoadingNextBatchForPrebuffer(t *testing.T) {
 
 func TestStartingLastFlowTrackLoadsNextBatchImmediately(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 2
 	model.app.QueueTracks = []app.Track{
@@ -2447,7 +2489,7 @@ func TestStartingLastFlowTrackLoadsNextBatchImmediately(t *testing.T) {
 
 func TestAppendedFlowBatchPrebuffersFirstNewTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.IsPlaying = true
 	model.app.IsFlowQueue = true
 	model.app.FlowLoadingMore = true
@@ -2480,7 +2522,7 @@ func TestAppendedFlowBatchPrebuffersFirstNewTrack(t *testing.T) {
 
 func TestPlaybackProgressClearsPrebufferAtQueueEnd(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentPlayID = 4
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2497,7 +2539,7 @@ func TestPlaybackProgressClearsPrebufferAtQueueEnd(t *testing.T) {
 
 func TestPlaybackErrorStopsPlayback(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentPlayID = 1
 	model.currentTrackID = "track-1"
 	model.currentQuality = deezer.AudioQuality320
@@ -2528,7 +2570,7 @@ func TestPlaybackErrorStopsPlayback(t *testing.T) {
 
 func TestPlaybackRetryReducesQualityAfterReloadFails(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.currentPlayID = 2
 	model.currentTrackID = "track-2"
 	model.currentQuality = deezer.AudioQualityFlac
@@ -2553,7 +2595,7 @@ func TestPlaybackRetryReducesQualityAfterReloadFails(t *testing.T) {
 }
 
 func TestPlaybackRetryStopsAtLowestQuality(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.currentPlayID = 3
 	model.currentTrackID = "track-3"
 	model.currentQuality = deezer.AudioQuality128
@@ -2571,7 +2613,7 @@ func TestPlaybackRetryStopsAtLowestQuality(t *testing.T) {
 }
 
 func TestCanceledPlaybackCompletionIsIgnored(t *testing.T) {
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
 
@@ -2587,12 +2629,12 @@ func TestCanceledPlaybackCompletionIsIgnored(t *testing.T) {
 
 func TestEnterOnSearchPlaylistLoadsPlaylist(t *testing.T) {
 	loader := &fakeLoader{
-		search: SearchData{
+		search: provider.SearchResult{
 			Playlists: []app.Playlist{{ID: "pl-1", Title: "Focus"}},
 		},
 		playlist: []app.Track{{ID: "11", Title: "Track", Artist: "Artist"}},
 	}
-	model := NewWithLoaderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
 	model.width = 120
 	model.height = 40
 	model.app.ShowingSearchResult = true
@@ -2618,7 +2660,7 @@ func TestEnterOnSearchPlaylistLoadsPlaylist(t *testing.T) {
 }
 
 func TestTabSwitchesSearchResultCategories(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryTracks
 	model.app.ActivePanel = app.ActivePanelMain
@@ -2645,7 +2687,7 @@ func TestSearchTabsHaveStableWidthAcrossCategories(t *testing.T) {
 }
 
 func TestSearchTabsRenderWithoutTrackResults(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryPlaylists
 	model.app.SearchPlaylists = []app.Playlist{{ID: "pl-1", Title: "Focus"}}
@@ -2658,7 +2700,7 @@ func TestSearchTabsRenderWithoutTrackResults(t *testing.T) {
 }
 
 func TestSearchTrackResultsShowAlbumAndYearColumns(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryTracks
 	model.app.CurrentTracks = []app.Track{
@@ -2675,7 +2717,7 @@ func TestSearchTrackResultsShowAlbumAndYearColumns(t *testing.T) {
 }
 
 func TestSearchTrackResultsUseAvailablePanelWidth(t *testing.T) {
-	model := NewWithLoader(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryTracks
 	model.app.CurrentTracks = []app.Track{
@@ -2697,7 +2739,7 @@ func TestSearchTrackResultsUseAvailablePanelWidth(t *testing.T) {
 
 func TestEnterOnSearchTrackQueuesAllSearchTracksAtSelectedIndex(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithLoaderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryTracks
 	model.app.CurrentTracks = []app.Track{
@@ -2729,11 +2771,11 @@ func TestEnterOnSearchTrackQueuesAllSearchTracksAtSelectedIndex(t *testing.T) {
 
 func TestEnterOnSearchArtistStartsSearch(t *testing.T) {
 	loader := &fakeLoader{
-		search: SearchData{
+		search: provider.SearchResult{
 			Tracks: []app.Track{{ID: "99", Title: "Artist Track", Artist: "Aster Lane"}},
 		},
 	}
-	model := NewWithLoaderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
 	model.width = 120
 	model.height = 40
 	model.app.ShowingSearchResult = true
@@ -2766,8 +2808,8 @@ type failingBootstrapLoader struct {
 	err error
 }
 
-func (f *failingBootstrapLoader) Bootstrap(context.Context) (BootstrapData, error) {
-	return BootstrapData{}, f.err
+func (f *failingBootstrapLoader) Bootstrap(context.Context) (provider.Library, error) {
+	return provider.Library{}, f.err
 }
 
 func TestBootstrapFailureRecovery(t *testing.T) {
@@ -2783,14 +2825,14 @@ func TestBootstrapFailureRecovery(t *testing.T) {
 			cfg := config.Default()
 			cfg.ARL = "saved-session"
 			loader := &failingBootstrapLoader{fakeLoader: &fakeLoader{}, err: tc.err}
-			model := NewWithLoader(cfg, loader)
+			model := NewWithProvider(cfg, loader)
 			updatedModel, _ := model.Update(bootstrapCmd(loader)())
 			updated := updatedModel.(Model)
 			if updated.login.active != tc.login {
 				t.Fatalf("loginActive = %v, want %v", updated.login.active, tc.login)
 			}
 			if tc.login {
-				if !updated.login.confirmOpen || updated.loader != nil {
+				if !updated.login.confirmOpen || updated.provider != nil {
 					t.Fatal("expected required login with rejected loader removed")
 				}
 				updated.cancelLogin()

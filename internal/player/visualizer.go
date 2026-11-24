@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/faiface/beep"
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 const (

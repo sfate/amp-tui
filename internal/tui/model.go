@@ -10,14 +10,16 @@ import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 // Model is the Bubble Tea root model; each concern keeps its state and handlers in its own file.
 type Model struct {
 	app             *app.App
-	loader          Loader
-	loaderFactory   func(config.Config) (Loader, error)
+	provider        provider.Provider
+	factory         provider.Factory
+	catalog         catalogInfo
 	saveConfig      func(config.Config) error
 	configLoadErr   error
 	bootstrapFailed bool
@@ -48,9 +50,9 @@ type Model struct {
 	perf       perfState
 }
 
-func New() Model {
+func New(opts ...Option) Model {
 	cfg, err := config.Load()
-	model := NewWithConfig(cfg)
+	model := NewWithConfig(cfg, opts...)
 	if err != nil {
 		model.configLoadErr = err
 		model.app.StatusMessage = fmt.Sprintf("Config error, settings will not be saved: %v", err)
@@ -58,43 +60,60 @@ func New() Model {
 	return model
 }
 
-func NewWithConfig(cfg config.Config) Model {
+// NewWithConfig signs in to the default registry provider when cfg holds a secret.
+func NewWithConfig(cfg config.Config, opts ...Option) Model {
 	cfg = normalizeConfig(cfg)
-	state := app.New(cfg)
+	o := applyOptions(opts)
+	id := o.registry.Default()
+	factory, _ := o.registry.Lookup(id)
+	info := catalogInfo{name: o.registry.Name(id)}
 
-	var loader Loader
-	loginActive := strings.TrimSpace(cfg.ARL) == ""
-	status := "Login required: paste ARL or Cookie header"
-	if strings.TrimSpace(cfg.ARL) != "" {
-		deezerLoader, err := NewDeezerLoader(cfg)
+	var session provider.Provider
+	var factoryErr error
+	if factory != nil {
+		instance, err := factory(cfg)
 		if err != nil {
-			loginActive = true
-			status = fmt.Sprintf("Login required: %v", err)
+			factoryErr = err
 		} else {
-			loader = deezerLoader
-			loginActive = false
-			status = "Loading Deezer library..."
+			info = catalogInfoOf(instance)
+			if strings.TrimSpace(cfg.ARL) != "" {
+				session = instance
+			}
 		}
 	}
 
-	state.StatusMessage = status
-	model := newModel(state, loader)
+	model := newModel(app.New(cfg), session, factory)
+	model.setCatalog(info)
+	loginActive := session == nil
+	switch {
+	case factory == nil:
+		model.app.StatusMessage = "No music provider configured"
+	case factoryErr != nil:
+		model.app.StatusMessage = fmt.Sprintf("Login required: %v", factoryErr)
+	case loginActive && info.auth != nil:
+		model.app.StatusMessage = "Login required: paste " + info.auth.LoginPrompt().SecretName
+	case loginActive:
+		model.app.StatusMessage = fmt.Sprintf("Login not available for %s", model.providerName())
+	default:
+		model.app.StatusMessage = model.loadingStatus()
+	}
 	model.login.active = loginActive
 	model.login.confirmOpen = loginActive
 	return model
 }
 
-func NewWithLoader(cfg config.Config, loader Loader) Model {
-	state := app.New(normalizeConfig(cfg))
-	state.StatusMessage = "Loading Deezer library..."
-	if loader == nil {
-		state.StatusMessage = "No Deezer loader configured"
+func NewWithProvider(cfg config.Config, p provider.Provider) Model {
+	model := newModel(app.New(normalizeConfig(cfg)), p, nil)
+	model.setCatalog(catalogInfoOf(p))
+	model.app.StatusMessage = model.loadingStatus()
+	if p == nil {
+		model.app.StatusMessage = "No music provider configured"
 	}
-	return newModel(state, loader)
+	return model
 }
 
-func NewWithLoaderAndRuntime(cfg config.Config, loader Loader, runtime PlayerRuntime) Model {
-	model := NewWithLoader(cfg, loader)
+func NewWithProviderAndRuntime(cfg config.Config, p provider.Provider, runtime PlayerRuntime) Model {
+	model := NewWithProvider(cfg, p)
 	model.runtime = runtime
 	return model
 }
@@ -108,27 +127,27 @@ func normalizeConfig(cfg config.Config) config.Config {
 	return cfg
 }
 
-func newModel(state *app.App, loader Loader) Model {
+func newModel(state *app.App, p provider.Provider, factory provider.Factory) Model {
 	return Model{
 		app:            state,
-		loader:         loader,
-		runtime:        newPlayerRuntime(loader),
+		provider:       p,
+		runtime:        newPlayerRuntime(p),
 		playbackEvents: make(chan tea.Msg, 32),
-		loaderFactory:  defaultLoaderFactory,
+		factory:        factory,
 		saveConfig:     config.Save,
 		artwork:        artworkState{cache: map[string]string{}, cacheOrder: []string{}},
 		prebuffer:      prebufferState{statuses: map[string]PrebufferStatus{}, ready: []string{}},
 		perf:           perfState{logPath: perfLogPathFromEnv(), msgCounts: map[string]int{}},
-		ready:          loader == nil,
+		ready:          p == nil,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
 	mediaCmd := m.listenMediaControlCmd()
-	if m.login.active || m.loader == nil {
+	if m.login.active || m.provider == nil {
 		return mediaCmd
 	}
-	return tea.Batch(bootstrapCmd(m.loader), loadingTickCmd(), mediaCmd)
+	return tea.Batch(bootstrapCmd(m.provider), loadingTickCmd(), mediaCmd)
 }
 
 // Update routes each message to the handler of its concern.
@@ -292,8 +311,4 @@ func normalQueueVisibleTrackRows(height int) int {
 	const queueRowsBeforeTracks = 7
 	const panelBorders = 2
 	return max(0, height-panelBorders-queueRowsBeforeTracks)
-}
-
-func defaultLoaderFactory(cfg config.Config) (Loader, error) {
-	return NewDeezerLoader(cfg)
 }

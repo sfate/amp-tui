@@ -5,8 +5,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/sfate/amp-tui/internal/deezer"
 	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type PlaybackSession interface {
@@ -83,8 +84,8 @@ type fadeStoppingSession interface {
 	FadeOutStop(duration time.Duration)
 }
 
-type playbackCapableLoader interface {
-	Loader
-	MediaClient() player.MediaClient
+// playbackCapableProvider bridges playback to the Deezer client until playback moves behind the provider.
+type playbackCapableProvider interface {
+	provider.Provider
 	DeezerClient() *deezer.Client
 }

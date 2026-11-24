@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 func (m *Model) togglePlayPause() {
@@ -151,10 +151,8 @@ func (m *Model) handleNext() tea.Cmd {
 		m.app.QueueState.Select(intPtr(nextIndex))
 		return m.scheduleTrackPlayback(m.app.QueueTracks[nextIndex].ID, qualityFromConfig(m.app.Config.DefaultQuality), 0, true)
 	}
-	if m.app.ShouldLoadMoreFlow() {
-		m.app.FlowLoadingMore = true
-		m.app.StatusMessage = "Loading more Flow..."
-		return loadFlowCmd(m.loader, m.app.FlowNextIndex, true, true)
+	if cmd := m.loadMoreFlow(true); cmd != nil {
+		return cmd
 	}
 	if m.app.RepeatMode == app.RepeatModeAll && len(m.app.QueueTracks) > 0 {
 		m.app.QueueIndex = intPtr(0)
@@ -244,10 +242,8 @@ func (m *Model) nextPlaybackCommandForAutoTransition() tea.Cmd {
 		return m.startTrackPlayback(m.app.QueueTracks[nextIndex].ID)
 	}
 
-	if m.app.ShouldLoadMoreFlow() {
-		m.app.FlowLoadingMore = true
-		m.app.StatusMessage = "Loading more Flow..."
-		return loadFlowCmd(m.loader, m.app.FlowNextIndex, true, true)
+	if cmd := m.loadMoreFlow(true); cmd != nil {
+		return cmd
 	}
 
 	if m.app.RepeatMode == app.RepeatModeAll {
@@ -285,10 +281,8 @@ func (m *Model) handlePlaybackFinished() tea.Cmd {
 		return m.startTrackPlayback(m.app.QueueTracks[nextIndex].ID)
 	}
 
-	if m.app.ShouldLoadMoreFlow() {
-		m.app.FlowLoadingMore = true
-		m.app.StatusMessage = "Loading more Flow..."
-		return loadFlowCmd(m.loader, m.app.FlowNextIndex, true, true)
+	if cmd := m.loadMoreFlow(true); cmd != nil {
+		return cmd
 	}
 
 	if m.app.RepeatMode == app.RepeatModeAll {

@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 const (
@@ -54,7 +54,7 @@ func (m *Model) maybePrebufferNextTrack() tea.Cmd {
 
 	nextIndex := *m.app.QueueIndex + 1
 	if nextIndex < 0 || nextIndex >= len(m.app.QueueTracks) {
-		if cmd := m.maybeLoadMoreFlowForTail(); cmd != nil {
+		if cmd := m.loadMoreFlow(false); cmd != nil {
 			return cmd
 		}
 		if m.app.RepeatMode == app.RepeatModeAll && len(m.app.QueueTracks) > 0 {
@@ -68,15 +68,6 @@ func (m *Model) maybePrebufferNextTrack() tea.Cmd {
 	}
 
 	return m.prebufferQueueWindowFrom(nextIndex)
-}
-
-func (m *Model) maybeLoadMoreFlowForTail() tea.Cmd {
-	if !m.app.ShouldLoadMoreFlow() {
-		return nil
-	}
-	m.app.FlowLoadingMore = true
-	m.app.StatusMessage = "Loading more Flow..."
-	return loadFlowCmd(m.loader, m.app.FlowNextIndex, true, false)
 }
 
 func (m *Model) prebufferQueueWindowFrom(start int) tea.Cmd {

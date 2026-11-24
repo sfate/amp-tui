@@ -5,8 +5,9 @@ package tui
 import (
 	"context"
 
-	"github.com/sfate/amp-tui/internal/deezer"
 	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type defaultPlayerRuntime struct {
@@ -14,13 +15,13 @@ type defaultPlayerRuntime struct {
 	backend player.Backend
 }
 
-func newPlayerRuntime(loader Loader) PlayerRuntime {
-	capable, ok := loader.(playbackCapableLoader)
-	if !ok {
+func newPlayerRuntime(p provider.Provider) PlayerRuntime {
+	capable, ok := p.(playbackCapableProvider)
+	if !ok || capable.DeezerClient() == nil {
 		return nil
 	}
 	return &defaultPlayerRuntime{
-		client:  capable.MediaClient(),
+		client:  capable.DeezerClient(),
 		backend: player.NewProcessBackend(),
 	}
 }

@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/core"
 )
 
 type CommandKind int
@@ -94,32 +95,11 @@ func (s *ListState) Selected() *int {
 	return s.selected
 }
 
-// NavItems are the sidebar Browse entries, in display order.
-var NavItems = []string{"Home", "Flow", "Explore", "Favorites", "Settings"}
-
-type Track struct {
-	ID        string
-	Title     string
-	Artist    string
-	Album     string
-	Year      string
-	AddedAtMS *int64
-}
-
-// QueueLabel is the text of the track in the queue panel.
-func (t Track) QueueLabel() string {
-	return t.Title + " - " + t.Artist
-}
-
-type Playlist struct {
-	ID    string
-	Title string
-}
-
-type Artist struct {
-	ID   string
-	Name string
-}
+type (
+	Track    = core.Track
+	Playlist = core.Playlist
+	Artist   = core.Artist
+)
 
 type NowPlaying struct {
 	ID          string
@@ -171,6 +151,10 @@ type App struct {
 	IsFlowQueue          bool
 	FlowSeenTrackIDs     map[string]struct{}
 	FlowSeenTrackIDOrder []string
+	// NavItems are the sidebar Browse entries, in display order.
+	NavItems []string
+	// FlowCollectionID is the radio collection that feeds the flow queue.
+	FlowCollectionID string
 }
 
 func New(cfg config.Config) *App {
@@ -216,8 +200,11 @@ func New(cfg config.Config) *App {
 func (a *App) HandleDown() {
 	switch a.ActivePanel {
 	case ActivePanelNavigation:
+		if len(a.NavItems) == 0 {
+			return
+		}
 		current := derefOrZero(a.NavState.Selected())
-		a.NavState.Select(intPtr(min(current+1, len(NavItems)-1)))
+		a.NavState.Select(intPtr(min(current+1, len(a.NavItems)-1)))
 	case ActivePanelPlaylists:
 		if len(a.Playlists) == 0 {
 			return
@@ -431,7 +418,7 @@ func (a *App) AppendFlowTracks(tracks []Track, autoplay bool) FlowAppendResult {
 	}
 
 	startIdx := len(a.QueueTracks)
-	if a.CurrentPlaylistID != nil && *a.CurrentPlaylistID == "__flow__" {
+	if a.viewingFlowCollection() {
 		a.CurrentTracks = append(a.CurrentTracks, cloneTracks(appendedTracks)...)
 	}
 	a.QueueTracks = append(a.QueueTracks, cloneTracks(appendedTracks)...)
@@ -470,6 +457,10 @@ func (a *App) rememberFlowSeenTrackID(trackID string) {
 	}
 }
 
+func (a *App) viewingFlowCollection() bool {
+	return a.FlowCollectionID != "" && a.CurrentPlaylistID != nil && *a.CurrentPlaylistID == a.FlowCollectionID
+}
+
 func (a *App) ShouldLoadMoreFlow() bool {
 	if !a.IsFlowQueue || a.FlowLoadingMore || a.QueueIndex == nil {
 		return false
@@ -497,7 +488,7 @@ func (a *App) trimFlowQueue() {
 		return
 	}
 	a.QueueTracks = cloneTracks(a.QueueTracks[start:])
-	if a.CurrentPlaylistID != nil && *a.CurrentPlaylistID == "__flow__" {
+	if a.viewingFlowCollection() {
 		a.CurrentTracks = cloneTracks(a.QueueTracks)
 		selected := derefOrZero(a.MainState.Selected())
 		if selected > 0 {

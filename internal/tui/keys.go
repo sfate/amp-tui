@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
 func (m *Model) onKeyPress(msg tea.KeyPressMsg) tea.Cmd {
@@ -18,8 +19,8 @@ func (m *Model) onKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 	if m.bootstrapFailed && msg.String() == "enter" {
 		m.bootstrapFailed = false
 		m.ready = false
-		m.app.StatusMessage = "Loading Deezer library..."
-		return tea.Batch(bootstrapCmd(m.loader), loadingTickCmd())
+		m.app.StatusMessage = m.loadingStatus()
+		return tea.Batch(bootstrapCmd(m.provider), loadingTickCmd())
 	}
 	switch msg.String() {
 	case "ctrl+c", "q":
@@ -189,16 +190,12 @@ func (m *Model) handleEnter() tea.Cmd {
 	switch m.app.ActivePanel {
 	case app.ActivePanelNavigation:
 		index := derefOrZero(m.app.NavState.Selected())
-		switch index {
-		case 0:
-			return loadHomeCmd(m.loader)
-		case 1:
-			return loadFlowCmd(m.loader, 0, false, true)
-		case 2:
-			return loadExploreCmd(m.loader)
-		case 3:
-			return loadFavoritesCmd(m.loader)
-		case 4:
+		sections := m.catalog.sections
+		switch {
+		case index >= 0 && index < len(sections):
+			sec := sections[index]
+			return loadSectionCmd(m.provider, sec, sec.Kind == provider.SectionRadio)
+		case index == len(sections):
 			m.app.ViewingSettings = true
 			m.app.ActivePanel = app.ActivePanelMain
 			m.app.SettingsState.Select(intPtr(0))
@@ -213,7 +210,7 @@ func (m *Model) handleEnter() tea.Cmd {
 			return nil
 		}
 		pl := m.app.Playlists[idx]
-		return loadPlaylistCmd(m.loader, pl.ID, pl.Title)
+		return loadPlaylistCmd(m.provider, pl.ID, pl.Title)
 	case app.ActivePanelQueue:
 		if len(m.app.QueueTracks) == 0 {
 			return nil
@@ -244,7 +241,10 @@ func (m *Model) handleEnter() tea.Cmd {
 			m.app.QueueIndex = intPtr(0)
 			m.app.QueueState.Select(intPtr(0))
 			m.app.IsPlaying = true
-			m.app.IsFlowQueue = m.app.CurrentPlaylistID != nil && *m.app.CurrentPlaylistID == "__flow__"
+			m.app.IsFlowQueue = m.viewingRadio()
+			if m.app.IsFlowQueue {
+				m.app.FlowCollectionID = *m.app.CurrentPlaylistID
+			}
 			m.app.StatusMessage = fmt.Sprintf("Queued %d tracks", len(m.app.QueueTracks))
 			return m.startTrackPlayback(m.app.QueueTracks[0].ID)
 		}

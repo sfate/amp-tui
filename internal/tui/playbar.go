@@ -23,7 +23,7 @@ func (m Model) renderCompactStatusColumn(width, height int) string {
 
 func (m Model) renderPlaybar() string {
 	controls := " space play/pause | n/p next prev | ,/. seek | u/i quality | r repeat | +/- volume "
-	if m.app.CurrentPlaylistID != nil && *m.app.CurrentPlaylistID == "__favorites__" {
+	if m.viewingFavorites() {
 		controls = " space play/pause | n/p next prev | ,/. seek | u/i quality | r repeat | s sort | +/- volume "
 	}
 	left := paint(controls, activePalette.Text, "")
@@ -40,7 +40,7 @@ func (m Model) renderPlaybar() string {
 
 func (m Model) renderHeader() string {
 	left := " amp-tui "
-	center := fmt.Sprintf(" %s ", displayCollectionTitle(derefString(m.app.CurrentPlaylistID, "Browse")))
+	center := fmt.Sprintf(" %s ", m.collectionTitle(derefString(m.app.CurrentPlaylistID, "Browse")))
 	right := fmt.Sprintf(" %s | q quit ", activePanelLabel(m.app.ActivePanel))
 	return renderTripleLine(left, center, right, m.width)
 }
@@ -71,7 +71,7 @@ func (m Model) renderStatusBody(width int) string {
 	title := "Nothing playing"
 	artist := "-"
 	progress := renderProgress(0, 0, statusProgressBarWidth(width))
-	source := displayCollectionTitle(derefString(m.app.CurrentPlaylistID, "Browse"))
+	source := m.collectionTitle(derefString(m.app.CurrentPlaylistID, "Browse"))
 	quality := "-"
 	elapsed := "00:00"
 	total := "00:00"
