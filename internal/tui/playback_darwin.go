@@ -20,47 +20,47 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 //go:embed mac_player_helper.swift
 var macPlayerHelperSource string
 
 type defaultPlayerRuntime struct {
-	client    *deezer.Client
+	streams   provider.StreamSource
 	manager   *darwinHelperManager
 	prebuffer *darwinPrebufferStore
 }
 
 func newPlayerRuntime(p provider.Provider) PlayerRuntime {
-	capable, ok := p.(playbackCapableProvider)
-	if !ok || capable.DeezerClient() == nil {
+	streams, ok := p.(provider.StreamSource)
+	if !ok {
 		return nil
 	}
 	return &defaultPlayerRuntime{
-		client:    capable.DeezerClient(),
+		streams:   streams,
 		manager:   newDarwinHelperManager(),
 		prebuffer: newDarwinPrebufferStore(),
 	}
 }
 
-func (r *defaultPlayerRuntime) Start(trackID string, quality deezer.AudioQuality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
+func (r *defaultPlayerRuntime) Start(trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
 	session := &darwinPlaybackSession{
 		done:    make(chan error, 1),
 		volume:  1,
 		manager: r.manager,
 	}
-	go session.run(r.client, r.prebuffer, trackID, quality, seekMS, handler)
+	go session.run(r.streams, r.prebuffer, trackID, quality, seekMS, handler)
 	return session, nil
 }
 
-func (r *defaultPlayerRuntime) Prebuffer(trackIDs []string, quality deezer.AudioQuality, events chan<- tea.Msg) {
+func (r *defaultPlayerRuntime) Prebuffer(trackIDs []string, quality core.Quality, events chan<- tea.Msg) {
 	if r.prebuffer == nil {
 		return
 	}
-	r.prebuffer.Prebuffer(context.Background(), r.client, trackIDs, quality, events)
+	r.prebuffer.Prebuffer(context.Background(), r.streams, trackIDs, quality, events)
 }
 
 func (r *defaultPlayerRuntime) MediaControlEvents() <-chan MediaControlCommand {
@@ -99,11 +99,11 @@ type darwinPlaybackSession struct {
 	visualizerOnce  sync.Once
 }
 
-func (s *darwinPlaybackSession) run(client *deezer.Client, prebuffer *darwinPrebufferStore, trackID string, quality deezer.AudioQuality, seekMS uint64, handler player.EventHandler) {
+func (s *darwinPlaybackSession) run(streams provider.StreamSource, prebuffer *darwinPrebufferStore, trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) {
 	defer close(s.done)
 
 	ctx := context.Background()
-	prepared, err := prebuffer.TakeOrPrepare(ctx, client, trackID, quality, handler.OnBufferingProgress)
+	prepared, err := prebuffer.TakeOrPrepare(ctx, streams, trackID, quality, handler.OnBufferingProgress)
 	if err != nil {
 		s.done <- err
 		return
@@ -114,18 +114,16 @@ func (s *darwinPlaybackSession) run(client *deezer.Client, prebuffer *darwinPreb
 		}
 	}()
 
-	meta := prepared.Meta
+	info := prepared.Info
 	initialMS := seekMS
-	if meta.DurationSecs != nil {
-		totalMS := *meta.DurationSecs * 1000
-		if totalMS == 0 {
-			initialMS = 0
-		} else if initialMS >= totalMS {
-			initialMS = totalMS - 1
-		}
+	if !prepared.Seekable {
+		initialMS = 0
+	}
+	if totalMS := info.DurationMS; totalMS > 0 && initialMS >= totalMS {
+		initialMS = totalMS - 1
 	}
 	if handler.OnTrackChanged != nil {
-		handler.OnTrackChanged(meta, quality, initialMS)
+		handler.OnTrackChanged(info, prepared.Quality, initialMS)
 	}
 	s.file = prepared.File
 
@@ -150,11 +148,7 @@ func (s *darwinPlaybackSession) run(client *deezer.Client, prebuffer *darwinPreb
 	}
 
 	if handler.OnPlaybackProgress != nil {
-		total := uint64(0)
-		if meta.DurationSecs != nil {
-			total = *meta.DurationSecs * 1000
-		}
-		handler.OnPlaybackProgress(initialMS, total)
+		handler.OnPlaybackProgress(initialMS, info.DurationMS)
 	}
 	if handler.OnAudioBands != nil {
 		stop := make(chan struct{})
@@ -170,7 +164,7 @@ func (s *darwinPlaybackSession) run(client *deezer.Client, prebuffer *darwinPreb
 		}
 		s.mu.Unlock()
 		if startVisualizer {
-			go player.StreamVisualizerFile(s.file, quality, initialMS, stop, pause, handler.OnAudioBands)
+			go player.StreamVisualizerFile(s.file, prepared.Format, initialMS, stop, pause, handler.OnAudioBands)
 			defer s.stopVisualizer()
 		}
 	}
@@ -571,16 +565,18 @@ func (m *darwinHelperManager) finishCurrent(err error) {
 }
 
 type darwinPreparedTrack struct {
-	TrackID string
-	Quality deezer.AudioQuality
-	Meta    deezer.TrackMetadata
-	File    string
-	Cached  bool
+	TrackID  string
+	Quality  core.Quality
+	Info     core.TrackInfo
+	Format   core.AudioFormat
+	Seekable bool
+	File     string
+	Cached   bool
 }
 
 type darwinPrebufferJob struct {
 	trackID string
-	quality deezer.AudioQuality
+	quality core.Quality
 	done    chan struct{}
 	result  *darwinPreparedTrack
 	err     error
@@ -591,7 +587,7 @@ type darwinPrebufferJob struct {
 type darwinPrebufferRequest struct {
 	key     string
 	trackID string
-	quality deezer.AudioQuality
+	quality core.Quality
 	events  chan<- tea.Msg
 }
 
@@ -616,7 +612,7 @@ func newDarwinPrebufferStore() *darwinPrebufferStore {
 	}
 }
 
-func (s *darwinPrebufferStore) Prebuffer(ctx context.Context, client *deezer.Client, trackIDs []string, quality deezer.AudioQuality, events chan<- tea.Msg) {
+func (s *darwinPrebufferStore) Prebuffer(ctx context.Context, streams provider.StreamSource, trackIDs []string, quality core.Quality, events chan<- tea.Msg) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -674,10 +670,10 @@ func (s *darwinPrebufferStore) Prebuffer(ctx context.Context, client *deezer.Cli
 			events:  events,
 		})
 	}
-	s.startPendingLocked(ctx, client)
+	s.startPendingLocked(ctx, streams)
 }
 
-func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, client *deezer.Client, trackID string, quality deezer.AudioQuality, onBufferingProgress func(uint8, player.BufferingStage)) (*darwinPreparedTrack, error) {
+func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, streams provider.StreamSource, trackID string, quality core.Quality, onBufferingProgress func(uint8, player.BufferingStage)) (*darwinPreparedTrack, error) {
 	key := darwinPrebufferKey(trackID, quality)
 	for {
 		s.mu.Lock()
@@ -702,7 +698,7 @@ func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, client *deezer
 			continue
 		}
 		s.mu.Unlock()
-		prepared, err := prepareDarwinTrackFile(ctx, client, trackID, quality, onBufferingProgress)
+		prepared, err := prepareDarwinTrackFile(ctx, streams, trackID, quality, onBufferingProgress)
 		if err != nil {
 			return nil, err
 		}
@@ -733,10 +729,10 @@ func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, client *deezer
 	}
 }
 
-func (s *darwinPrebufferStore) runJob(ctx context.Context, client *deezer.Client, job *darwinPrebufferJob) {
+func (s *darwinPrebufferStore) runJob(ctx context.Context, streams provider.StreamSource, job *darwinPrebufferJob) {
 	defer close(job.done)
 
-	result, err := prepareDarwinTrackFile(ctx, client, job.trackID, job.quality, nil)
+	result, err := prepareDarwinTrackFile(ctx, streams, job.trackID, job.quality, nil)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -752,7 +748,7 @@ func (s *darwinPrebufferStore) runJob(ctx context.Context, client *deezer.Client
 	job.result = result
 	if err != nil {
 		sendPrebufferStatus(job.events, job.trackID, job.quality, PrebufferStatusFailed)
-		s.startPendingLocked(context.Background(), client)
+		s.startPendingLocked(context.Background(), streams)
 		return
 	}
 	if old := s.current[key]; old != nil && old.File != "" {
@@ -761,7 +757,7 @@ func (s *darwinPrebufferStore) runJob(ctx context.Context, client *deezer.Client
 	s.current[key] = result
 	s.rememberCachedLocked(key)
 	sendPrebufferStatus(job.events, job.trackID, job.quality, PrebufferStatusReady)
-	s.startPendingLocked(context.Background(), client)
+	s.startPendingLocked(context.Background(), streams)
 }
 
 func (s *darwinPrebufferStore) cancelPendingLocked() {
@@ -811,7 +807,7 @@ func (s *darwinPrebufferStore) removeCachedOrderLocked(key string) {
 	}
 }
 
-func (s *darwinPrebufferStore) startPendingLocked(ctx context.Context, client *deezer.Client) {
+func (s *darwinPrebufferStore) startPendingLocked(ctx context.Context, streams provider.StreamSource) {
 	for len(s.pending) > 0 && len(s.inflight) < maxDarwinPrebufferInflight {
 		req := s.pending[0]
 		s.pending = s.pending[1:]
@@ -832,7 +828,7 @@ func (s *darwinPrebufferStore) startPendingLocked(ctx context.Context, client *d
 		}
 		s.inflight[req.key] = job
 		sendPrebufferStatus(req.events, req.trackID, req.quality, PrebufferStatusLoading)
-		go s.runJob(jobCtx, client, job)
+		go s.runJob(jobCtx, streams, job)
 	}
 }
 
@@ -858,11 +854,11 @@ func (s *darwinPrebufferStore) pendingContainsLocked(key string) bool {
 	return false
 }
 
-func darwinPrebufferKey(trackID string, quality deezer.AudioQuality) string {
-	return string(quality) + "\x00" + trackID
+func darwinPrebufferKey(trackID string, quality core.Quality) string {
+	return quality.ID + "\x00" + trackID
 }
 
-func sendPrebufferStatus(events chan<- tea.Msg, trackID string, quality deezer.AudioQuality, status PrebufferStatus) {
+func sendPrebufferStatus(events chan<- tea.Msg, trackID string, quality core.Quality, status PrebufferStatus) {
 	if events == nil {
 		return
 	}
@@ -872,97 +868,75 @@ func sendPrebufferStatus(events chan<- tea.Msg, trackID string, quality deezer.A
 	}
 }
 
-func prepareDarwinTrackFile(ctx context.Context, client *deezer.Client, trackID string, quality deezer.AudioQuality, onBufferingProgress func(uint8, player.BufferingStage)) (*darwinPreparedTrack, error) {
-	if onBufferingProgress != nil {
-		onBufferingProgress(0, player.BufferingStageResolving)
-	}
-	if _, err := client.FetchAPIToken(ctx); err != nil {
-		return nil, err
-	}
-	if onBufferingProgress != nil {
-		onBufferingProgress(10, player.BufferingStageResolving)
-	}
-
-	meta, err := client.FetchTrackMetadata(ctx, trackID)
-	if err != nil {
-		return nil, err
-	}
-	if onBufferingProgress != nil {
-		onBufferingProgress(25, player.BufferingStageResolving)
-	}
-
-	signedURL, err := client.FetchMediaURL(ctx, deezer.MediaRequest{
-		TrackToken: meta.TrackToken,
-		Quality:    quality,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if onBufferingProgress != nil {
-		onBufferingProgress(40, player.BufferingStageDownloading)
-	}
-
-	encrypted, err := client.FetchEncryptedBytesFromSignedURLWithProgress(ctx, signedURL, func(downloaded, total int64) {
-		if onBufferingProgress == nil {
-			return
+// prepareDarwinTrackFile writes the resolved track to a temp file, because the Swift helper plays files.
+func prepareDarwinTrackFile(ctx context.Context, streams provider.StreamSource, trackID string, quality core.Quality, onBufferingProgress func(uint8, player.BufferingStage)) (*darwinPreparedTrack, error) {
+	report := func(percent uint8, stage player.BufferingStage) {
+		if onBufferingProgress != nil {
+			onBufferingProgress(percent, stage)
 		}
-		if total <= 0 {
-			onBufferingProgress(40, player.BufferingStageDownloading)
-			return
-		}
-		percent := 15 + int((downloaded*55)/total)
-		if percent > 70 {
-			percent = 70
-		}
-		onBufferingProgress(uint8(percent), player.BufferingStageDownloading)
-	})
+	}
+	if streams == nil {
+		return nil, errors.New("provider does not stream audio")
+	}
+	report(0, player.BufferingStageResolving)
+	src, err := streams.Resolve(ctx, trackID, quality)
 	if err != nil {
 		return nil, err
 	}
-	if onBufferingProgress != nil {
-		onBufferingProgress(70, player.BufferingStageDecrypting)
+	if src.Bytes == nil {
+		return nil, fmt.Errorf("track %s has no byte stream to play", trackID)
 	}
+	report(40, player.BufferingStageDownloading)
 
-	decrypted, err := deezer.DecryptAudioStream(meta.ID, encrypted)
+	body, err := src.Bytes.OpenRange(ctx, 0)
 	if err != nil {
 		return nil, err
 	}
-	if onBufferingProgress != nil {
-		onBufferingProgress(90, player.BufferingStagePreparing)
-	}
+	defer func() { _ = body.Close() }()
 
-	file, err := os.CreateTemp("", "amp-tui-*"+qualityExtension(quality))
+	file, err := os.CreateTemp("", "amp-tui-*"+src.Format.Extension())
 	if err != nil {
 		return nil, err
 	}
-	if _, err := file.Write(decrypted); err != nil {
+	progress := &downloadProgressWriter{total: src.Bytes.Size(), report: report}
+	if _, err := io.Copy(io.MultiWriter(file, progress), body); err != nil {
 		_ = file.Close()
 		_ = os.Remove(file.Name())
 		return nil, err
 	}
+	report(90, player.BufferingStagePreparing)
 	if err := file.Close(); err != nil {
 		_ = os.Remove(file.Name())
 		return nil, err
 	}
-	if onBufferingProgress != nil {
-		onBufferingProgress(100, player.BufferingStageReady)
-	}
+	report(100, player.BufferingStageReady)
 
 	return &darwinPreparedTrack{
-		TrackID: trackID,
-		Quality: quality,
-		Meta:    meta,
-		File:    file.Name(),
+		TrackID:  trackID,
+		Quality:  src.Quality,
+		Info:     src.Info,
+		Format:   src.Format,
+		Seekable: src.Seekable,
+		File:     file.Name(),
 	}, nil
 }
 
-func qualityExtension(quality deezer.AudioQuality) string {
-	switch quality {
-	case deezer.AudioQualityFlac:
-		return ".flac"
-	default:
-		return ".mp3"
+// downloadProgressWriter maps download bytes onto the 15-70% buffering band.
+type downloadProgressWriter struct {
+	written int64
+	total   int64
+	report  func(uint8, player.BufferingStage)
+}
+
+func (w *downloadProgressWriter) Write(p []byte) (int, error) {
+	w.written += int64(len(p))
+	if w.total <= 0 {
+		w.report(40, player.BufferingStageDownloading)
+		return len(p), nil
 	}
+	percent := min(15+int((w.written*55)/w.total), 70)
+	w.report(uint8(percent), player.BufferingStageDownloading)
+	return len(p), nil
 }
 
 var (

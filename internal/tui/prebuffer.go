@@ -6,7 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/core"
 )
 
 const (
@@ -23,7 +23,7 @@ type prebufferState struct {
 }
 
 func (m *Model) onPrebufferStatus(msg prebufferStatusMsg) tea.Cmd {
-	if msg.quality != qualityFromConfig(m.app.Config.DefaultQuality) {
+	if msg.quality.ID != m.configuredQuality().ID {
 		return listenPlaybackEventCmd(m.playbackEvents)
 	}
 	m.setPrebufferStatus(msg.trackID, msg.quality, msg.status)
@@ -88,7 +88,7 @@ func (m *Model) prebufferTrackWindowFromLimit(tracks []app.Track, start int, lim
 		return nil
 	}
 	if start < 0 || start >= len(tracks) {
-		runtime.Prebuffer(nil, qualityFromConfig(m.app.Config.DefaultQuality), m.playbackEvents)
+		runtime.Prebuffer(nil, m.configuredQuality(), m.playbackEvents)
 		return nil
 	}
 	if limit <= 0 {
@@ -102,7 +102,7 @@ func (m *Model) prebufferTrackWindowFromLimit(tracks []app.Track, start int, lim
 		}
 		trackIDs = append(trackIDs, track.ID)
 	}
-	quality := qualityFromConfig(m.app.Config.DefaultQuality)
+	quality := m.configuredQuality()
 	for _, trackID := range trackIDs {
 		m.setPrebufferStatus(trackID, quality, PrebufferStatusScheduled)
 	}
@@ -115,11 +115,11 @@ func (m *Model) prebufferTrackWindowFromLimit(tracks []app.Track, start int, lim
 
 func (m *Model) cancelPrebufferWindow() {
 	if runtime, ok := m.runtime.(PrebufferingRuntime); ok {
-		runtime.Prebuffer(nil, qualityFromConfig(m.app.Config.DefaultQuality), m.playbackEvents)
+		runtime.Prebuffer(nil, m.configuredQuality(), m.playbackEvents)
 	}
 }
 
-func (m *Model) setPrebufferStatus(trackID string, quality deezer.AudioQuality, status PrebufferStatus) {
+func (m *Model) setPrebufferStatus(trackID string, quality core.Quality, status PrebufferStatus) {
 	if strings.TrimSpace(trackID) == "" {
 		return
 	}
@@ -156,7 +156,7 @@ func (m Model) prebufferStatus(trackID string) (PrebufferStatus, bool) {
 	if strings.TrimSpace(trackID) == "" || m.prebuffer.statuses == nil {
 		return PrebufferStatusScheduled, false
 	}
-	status, ok := m.prebuffer.statuses[prebufferKey(trackID, qualityFromConfig(m.app.Config.DefaultQuality))]
+	status, ok := m.prebuffer.statuses[prebufferKey(trackID, m.configuredQuality())]
 	return status, ok
 }
 
@@ -169,6 +169,6 @@ func (m Model) hasLoadingPrebuffer() bool {
 	return false
 }
 
-func prebufferKey(trackID string, quality deezer.AudioQuality) string {
-	return string(quality) + "\x00" + trackID
+func prebufferKey(trackID string, quality core.Quality) string {
+	return quality.ID + "\x00" + trackID
 }

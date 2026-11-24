@@ -11,40 +11,6 @@ import (
 	"github.com/sfate/amp-tui/internal/colorscheme"
 )
 
-type AudioQuality string
-
-const (
-	AudioQuality128  AudioQuality = "Kbps128"
-	AudioQuality320  AudioQuality = "Kbps320"
-	AudioQualityFlac AudioQuality = "Flac"
-)
-
-func (q AudioQuality) FormatCode() uint8 {
-	switch q {
-	case AudioQuality128:
-		return 1
-	case AudioQuality320:
-		return 3
-	case AudioQualityFlac:
-		return 9
-	default:
-		return 0
-	}
-}
-
-func AudioQualityFromFormatCode(code uint8) (AudioQuality, bool) {
-	switch code {
-	case 1:
-		return AudioQuality128, true
-	case 3:
-		return AudioQuality320, true
-	case 9:
-		return AudioQualityFlac, true
-	default:
-		return "", false
-	}
-}
-
 type Config struct {
 	Theme               colorscheme.Name `json:"theme"`
 	CrossfadeEnabled    bool             `json:"crossfade_enabled"`
@@ -52,7 +18,7 @@ type Config struct {
 	DisplayMode         DisplayMode      `json:"display_mode"`
 	DisplayEnabled      bool             `json:"display_enabled,omitempty"`
 	CompactView         bool             `json:"compact_view"`
-	DefaultQuality      AudioQuality     `json:"default_quality"`
+	DefaultQuality      string           `json:"default_quality"` // provider quality ID
 	ARL                 string           `json:"arl"`
 }
 
@@ -74,7 +40,7 @@ func Default() Config {
 		DisplayMode:         DisplayModeEqualizer,
 		DisplayEnabled:      true,
 		CompactView:         true,
-		DefaultQuality:      AudioQuality320,
+		DefaultQuality:      "Kbps320",
 		ARL:                 "",
 	}
 }

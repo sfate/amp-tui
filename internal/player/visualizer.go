@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/faiface/beep"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/core"
 )
 
 const (
@@ -68,7 +68,7 @@ func (v *VisualizerStreamer) asyncAnalyzer() *asyncVisualizerAnalyzer {
 	return v.analyzer
 }
 
-func StreamVisualizerFile(path string, quality deezer.AudioQuality, startMS uint64, stop <-chan struct{}, paused <-chan bool, onBands func([]uint8)) {
+func StreamVisualizerFile(path string, audioFormat core.AudioFormat, startMS uint64, stop <-chan struct{}, paused <-chan bool, onBands func([]uint8)) {
 	if onBands == nil || path == "" {
 		return
 	}
@@ -78,7 +78,7 @@ func StreamVisualizerFile(path string, quality deezer.AudioQuality, startMS uint
 	}
 	defer func() { _ = file.Close() }()
 
-	streamer, format, err := decodeStream(file, quality)
+	streamer, format, err := decodeStream(file, audioFormat)
 	if err != nil {
 		return
 	}

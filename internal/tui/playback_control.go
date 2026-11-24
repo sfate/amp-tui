@@ -8,7 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/config"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 type pendingPlayback struct {
 	requestID    int
 	trackID      string
-	quality      deezer.AudioQuality
+	quality      core.Quality
 	seekMS       uint64
 	resetRetries bool
 }
@@ -34,18 +35,18 @@ type playbackProgress struct {
 }
 
 func (m *Model) startTrackPlayback(trackID string) tea.Cmd {
-	return m.startTrackPlaybackWithQualityAndSeek(trackID, qualityFromConfig(m.app.Config.DefaultQuality), 0, true)
+	return m.startTrackPlaybackWithQualityAndSeek(trackID, m.configuredQuality(), 0, true)
 }
 
-func (m *Model) startTrackPlaybackWithQuality(trackID string, quality deezer.AudioQuality, resetRetries bool) tea.Cmd {
+func (m *Model) startTrackPlaybackWithQuality(trackID string, quality core.Quality, resetRetries bool) tea.Cmd {
 	return m.startTrackPlaybackWithQualityAndSeek(trackID, quality, 0, resetRetries)
 }
 
-func (m *Model) startTrackPlaybackAt(trackID string, quality deezer.AudioQuality, seekMS uint64, resetRetries bool) tea.Cmd {
+func (m *Model) startTrackPlaybackAt(trackID string, quality core.Quality, seekMS uint64, resetRetries bool) tea.Cmd {
 	return m.startTrackPlaybackWithQualityAndSeek(trackID, quality, seekMS, resetRetries)
 }
 
-func (m *Model) scheduleTrackPlayback(trackID string, quality deezer.AudioQuality, seekMS uint64, resetRetries bool) tea.Cmd {
+func (m *Model) scheduleTrackPlayback(trackID string, quality core.Quality, seekMS uint64, resetRetries bool) tea.Cmd {
 	if !m.resetForTrackStart(trackID, resetRetries) {
 		return nil
 	}
@@ -66,7 +67,7 @@ func (m *Model) scheduleTrackPlayback(trackID string, quality deezer.AudioQualit
 	})
 }
 
-func (m *Model) startTrackPlaybackWithQualityAndSeek(trackID string, quality deezer.AudioQuality, seekMS uint64, resetRetries bool) tea.Cmd {
+func (m *Model) startTrackPlaybackWithQualityAndSeek(trackID string, quality core.Quality, seekMS uint64, resetRetries bool) tea.Cmd {
 	if !m.resetForTrackStart(trackID, resetRetries) {
 		return nil
 	}
@@ -88,8 +89,8 @@ func (m *Model) seekCurrentTrack(deltaMS int64) tea.Cmd {
 		m.app.StatusMessage = "Nothing playing"
 		return nil
 	}
-	if m.currentQuality == deezer.AudioQualityFlac {
-		m.app.StatusMessage = "Seeking is not supported for FLAC playback"
+	if !m.currentQuality.Seekable {
+		m.app.StatusMessage = fmt.Sprintf("Seeking is not supported for %s playback", m.currentQuality.Label)
 		return nil
 	}
 	seekMS := m.currentPlaybackPositionMS()
@@ -115,8 +116,8 @@ func (m *Model) seekCurrentTrackTo(positionMS uint64) tea.Cmd {
 		m.app.StatusMessage = "Nothing playing"
 		return nil
 	}
-	if m.currentQuality == deezer.AudioQualityFlac {
-		m.app.StatusMessage = "Seeking is not supported for FLAC playback"
+	if !m.currentQuality.Seekable {
+		m.app.StatusMessage = fmt.Sprintf("Seeking is not supported for %s playback", m.currentQuality.Label)
 		return nil
 	}
 	if total := m.app.NowPlaying.TotalMS; total > 0 && positionMS >= total {
@@ -131,16 +132,16 @@ func (m *Model) switchCurrentQuality(direction int) tea.Cmd {
 		m.app.StatusMessage = "Nothing playing"
 		return nil
 	}
-	next := nextDeezerQuality(m.currentQuality, direction)
-	if next == m.currentQuality {
-		m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(configQualityFromDeezer(m.currentQuality)))
+	next := m.stepQuality(m.currentQuality, direction, false)
+	if next.ID == m.currentQuality.ID {
+		m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(m.currentQuality))
 		return nil
 	}
 	seekMS := m.currentPlaybackPositionMS()
-	if next == deezer.AudioQualityFlac {
+	if !next.Seekable {
 		seekMS = 0
 	}
-	m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(configQualityFromDeezer(next)))
+	m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(next))
 	return m.startTrackPlaybackAt(m.currentTrackID, next, seekMS, true)
 }
 
@@ -172,9 +173,9 @@ func (m *Model) retryPlaybackAfterError(err error) tea.Cmd {
 		return m.startTrackPlaybackWithQuality(trackID, m.currentQuality, false)
 	}
 
-	if lower, ok := lowerPlaybackQuality(m.currentQuality); ok {
+	if lower, ok := m.lowerPlaybackQuality(m.currentQuality); ok {
 		m.playbackRetries++
-		m.app.StatusMessage = fmt.Sprintf("Playback error, retrying at %s: %v", qualityLabel(configQualityFromDeezer(lower)), err)
+		m.app.StatusMessage = fmt.Sprintf("Playback error, retrying at %s: %v", qualityLabel(lower), err)
 		return m.startTrackPlaybackWithQuality(trackID, lower, false)
 	}
 
@@ -183,15 +184,14 @@ func (m *Model) retryPlaybackAfterError(err error) tea.Cmd {
 	return nil
 }
 
-func lowerPlaybackQuality(current deezer.AudioQuality) (deezer.AudioQuality, bool) {
-	switch current {
-	case deezer.AudioQualityFlac:
-		return deezer.AudioQuality320, true
-	case deezer.AudioQuality320:
-		return deezer.AudioQuality128, true
-	default:
-		return "", false
+// lowerPlaybackQuality is the step below current on the provider ladder.
+func (m Model) lowerPlaybackQuality(current core.Quality) (core.Quality, bool) {
+	ladder := m.qualityLadder()
+	idx := qualityIndex(ladder, current.ID)
+	if idx <= 0 {
+		return core.Quality{}, false
 	}
+	return ladder[idx-1], true
 }
 
 func (m *Model) stopCurrentSession() {
@@ -213,46 +213,57 @@ func (m *Model) shutdownRuntime() {
 	}
 }
 
-func nextDeezerQuality(current deezer.AudioQuality, direction int) deezer.AudioQuality {
-	qualities := []deezer.AudioQuality{deezer.AudioQuality128, deezer.AudioQuality320, deezer.AudioQualityFlac}
-	idx := 1
-	for i, quality := range qualities {
-		if quality == current {
-			idx = i
-			break
-		}
+func (m Model) qualityLadder() []core.Quality {
+	streams, ok := m.provider.(provider.StreamSource)
+	if !ok {
+		return nil
 	}
-	if direction < 0 {
-		idx--
-		if idx < 0 {
-			idx = 0
-		}
-	} else if direction > 0 {
-		idx = min(idx+1, len(qualities)-1)
-	}
-	return qualities[idx]
+	return streams.Qualities()
 }
 
-func qualityFromConfig(q config.AudioQuality) deezer.AudioQuality {
-	switch q {
-	case config.AudioQuality128:
-		return deezer.AudioQuality128
-	case config.AudioQualityFlac:
-		return deezer.AudioQualityFlac
-	default:
-		return deezer.AudioQuality320
+// configuredQuality maps the config ID onto the provider ladder; an unknown ID gives the provider default.
+func (m Model) configuredQuality() core.Quality {
+	streams, ok := m.provider.(provider.StreamSource)
+	if !ok {
+		return core.Quality{ID: m.app.Config.DefaultQuality}
 	}
+	ladder := streams.Qualities()
+	if idx := qualityIndex(ladder, m.app.Config.DefaultQuality); idx >= 0 {
+		return ladder[idx]
+	}
+	return streams.DefaultQuality()
 }
 
-func configQualityFromDeezer(q deezer.AudioQuality) config.AudioQuality {
-	switch q {
-	case deezer.AudioQuality128:
-		return config.AudioQuality128
-	case deezer.AudioQualityFlac:
-		return config.AudioQualityFlac
-	default:
-		return config.AudioQuality320
+// stepQuality moves along the provider ladder; wrap is for Settings, the u/i keys stop at the ends.
+func (m Model) stepQuality(current core.Quality, direction int, wrap bool) core.Quality {
+	ladder := m.qualityLadder()
+	if len(ladder) == 0 {
+		return current
 	}
+	idx := qualityIndex(ladder, current.ID)
+	if idx < 0 {
+		idx = max(0, qualityIndex(ladder, m.configuredQuality().ID))
+	}
+	switch {
+	case direction < 0 && wrap:
+		idx = (idx - 1 + len(ladder)) % len(ladder)
+	case direction < 0:
+		idx = max(idx-1, 0)
+	case direction > 0 && wrap:
+		idx = (idx + 1) % len(ladder)
+	case direction > 0:
+		idx = min(idx+1, len(ladder)-1)
+	}
+	return ladder[idx]
+}
+
+func qualityIndex(ladder []core.Quality, id string) int {
+	for i, q := range ladder {
+		if q.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // resetForTrackStart stops the current session and clears per-track state; false means nothing can start.

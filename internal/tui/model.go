@@ -10,8 +10,8 @@ import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/provider"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 // Model is the Bubble Tea root model; each concern keeps its state and handlers in its own file.
@@ -36,7 +36,7 @@ type Model struct {
 	nextPlaybackID  int
 	currentPlayID   int
 	currentTrackID  string
-	currentQuality  deezer.AudioQuality
+	currentQuality  core.Quality
 	playbackRetries int
 	pauseRequested  bool
 	pendingPlayback pendingPlayback

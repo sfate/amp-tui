@@ -6,11 +6,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
-func startPlaybackCmdWithEvents(playID int, trackID string, runtime PlayerRuntime, quality deezer.AudioQuality, seekMS uint64, enableVisualizer bool, events chan tea.Msg) tea.Cmd {
+func startPlaybackCmdWithEvents(playID int, trackID string, runtime PlayerRuntime, quality core.Quality, seekMS uint64, enableVisualizer bool, events chan tea.Msg) tea.Cmd {
 	if runtime == nil {
 		return nil
 	}
@@ -18,8 +18,8 @@ func startPlaybackCmdWithEvents(playID int, trackID string, runtime PlayerRuntim
 		var visualizerMu sync.Mutex
 		var lastVisualizerSent time.Time
 		handler := player.EventHandler{
-			OnTrackChanged: func(meta deezer.TrackMetadata, q deezer.AudioQuality, initialMS uint64) {
-				events <- playbackTrackChangedMsg{playID: playID, meta: meta, quality: q, initialMS: initialMS}
+			OnTrackChanged: func(info core.TrackInfo, q core.Quality, initialMS uint64) {
+				events <- playbackTrackChangedMsg{playID: playID, info: info, quality: q, initialMS: initialMS}
 			},
 			OnBufferingProgress: func(percent uint8, stage player.BufferingStage) {
 				events <- bufferingProgressMsg{playID: playID, percent: percent, stage: stage}

@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # Generic packages reach Deezer only through the provider contracts; cmd/amp-tui wires it in.
+        provider-neutral:
+          list-mode: lax
+          files:
+            - "**/internal/tui/**"
+            - "**/internal/app/**"
+            - "**/internal/player/**"
+            - "**/internal/core/**"
+            - "**/internal/config/**"
+            - "**/internal/provider/*.go"
+          deny:
+            - pkg: github.com/sfate/amp-tui/internal/provider/deezer
+              desc: use the provider contracts in internal/provider instead

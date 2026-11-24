@@ -3,9 +3,9 @@ package tui
 import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type bootstrapFailedMsg struct {
@@ -50,14 +50,14 @@ type playbackStartedMsg struct {
 type playbackStartFailedMsg struct {
 	playID  int
 	trackID string
-	quality deezer.AudioQuality
+	quality core.Quality
 	err     error
 }
 
 type playbackTrackChangedMsg struct {
 	playID    int
-	meta      deezer.TrackMetadata
-	quality   deezer.AudioQuality
+	info      core.TrackInfo
+	quality   core.Quality
 	initialMS uint64
 }
 
@@ -92,7 +92,7 @@ type playbackTickMsg struct{}
 
 type prebufferStatusMsg struct {
 	trackID string
-	quality deezer.AudioQuality
+	quality core.Quality
 	status  PrebufferStatus
 }
 

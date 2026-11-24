@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -112,5 +113,88 @@ func TestRadioSectionWithoutInfiniteRadioDoesNotLoadMore(t *testing.T) {
 	}
 	if model.app.FlowLoadingMore {
 		t.Fatal("expected loading flag to stay clear")
+	}
+}
+
+func TestProviderWithoutStreamSourceHasNoRuntime(t *testing.T) {
+	prov := &plainProvider{sections: []provider.Section{{ID: "library", Label: "Library", Kind: provider.SectionTracks}}}
+	model := NewWithProvider(config.Default(), prov)
+	if model.runtime != nil {
+		t.Fatalf("expected no runtime for a provider without StreamSource, got %T", model.runtime)
+	}
+
+	if cmd := model.startTrackPlayback("1"); cmd != nil {
+		t.Fatal("expected no playback command without a runtime")
+	}
+	if model.app.StatusMessage != "Playback runtime is not configured" {
+		t.Fatalf("unexpected status %q", model.app.StatusMessage)
+	}
+	if newPlayerRuntime(withStream(&fakeLoader{})) == nil {
+		t.Fatal("expected a runtime for a provider with StreamSource")
+	}
+}
+
+var (
+	fakeLow  = core.Quality{ID: "low", Label: "Fake Low", Seekable: true}
+	fakeHigh = core.Quality{ID: "high", Label: "Fake Hi-Fi", Seekable: true}
+)
+
+func twoStepProvider() *fakeStreamLoader {
+	return &fakeStreamLoader{fakeLoader: &fakeLoader{}, ladder: []core.Quality{fakeLow, fakeHigh}}
+}
+
+func TestQualityUpStopsAtTopOfProviderLadder(t *testing.T) {
+	runtime := &fakePlaybackRuntime{}
+	model := NewWithProviderAndRuntime(config.Default(), twoStepProvider(), runtime)
+	model.width = 120
+	model.height = 40
+	model.currentTrackID = "track-1"
+	model.currentQuality = fakeHigh
+	model.app.NowPlaying = &app.NowPlaying{ID: "track-1", Title: "Song", Artist: "Artist", Quality: fakeHigh, TotalMS: 120_000}
+
+	next, cmd := model.Update(tea.KeyPressMsg(tea.Key{Text: "i"}))
+	updated := next.(Model)
+	if cmd != nil {
+		t.Fatal("expected no restart at the top of the ladder")
+	}
+	if updated.currentQuality != fakeHigh {
+		t.Fatalf("expected quality to stay at the top, got %+v", updated.currentQuality)
+	}
+	if updated.app.StatusMessage != "Quality: Fake Hi-Fi" {
+		t.Fatalf("unexpected status %q", updated.app.StatusMessage)
+	}
+	if !strings.Contains(updated.renderStatusBody(80), "Fake Hi-Fi") {
+		t.Fatal("expected the playbar to show the provider quality label")
+	}
+
+	next, cmd = updated.Update(tea.KeyPressMsg(tea.Key{Text: "u"}))
+	updated = next.(Model)
+	if cmd == nil {
+		t.Fatal("expected quality-down to restart playback")
+	}
+	_, _ = updated.Update(firstBatchMessage(cmd))
+	if len(runtime.qualities) != 1 || runtime.qualities[0] != fakeLow {
+		t.Fatalf("expected a switch to the lower step, got %#v", runtime.qualities)
+	}
+}
+
+func TestConfiguredQualityOutsideLadderUsesProviderDefault(t *testing.T) {
+	cfg := config.Default()
+	cfg.DefaultQuality = "Flac"
+	runtime := &fakePlaybackRuntime{}
+	model := NewWithProviderAndRuntime(cfg, twoStepProvider(), runtime)
+
+	cmd := model.startTrackPlayback("track-1")
+	if cmd == nil {
+		t.Fatal("expected playback command")
+	}
+	_, _ = model.Update(firstBatchMessage(cmd))
+	if len(runtime.qualities) != 1 || runtime.qualities[0] != fakeHigh {
+		t.Fatalf("expected the provider default quality, got %#v", runtime.qualities)
+	}
+	for _, row := range model.renderSettingsRows() {
+		if strings.Contains(row, "Quality") && !strings.Contains(row, "Fake Hi-Fi") {
+			t.Fatalf("expected the settings row to show the default label, got %q", row)
+		}
 	}
 }
