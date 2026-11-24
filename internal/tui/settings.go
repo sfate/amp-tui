@@ -6,6 +6,8 @@ import (
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/secrets"
 )
 
 type settingsRowID string
@@ -48,7 +50,9 @@ func (m *Model) adjustSelectedSetting(direction int) {
 		m.adjustVolume(direction * 5)
 	case settingQuality:
 		next := m.stepQuality(m.configuredQuality(), direction, true)
-		m.app.Config.DefaultQuality = next.ID
+		settings := m.app.Config.ProviderSettings(string(m.providerID))
+		settings.DefaultQuality = next.ID
+		m.app.Config.SetProviderSettings(string(m.providerID), settings)
 		m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(next))
 		m.persistConfig()
 	case settingCrossfade:
@@ -79,13 +83,45 @@ func (m *Model) persistConfig() {
 
 // writeConfig refuses to save while the config file on disk failed to load, so the file is not replaced by defaults.
 func (m *Model) writeConfig() error {
-	if m.configLoadErr != nil {
-		return fmt.Errorf("fix or remove the config file first: %w", m.configLoadErr)
+	if err := writesBlocked(m.configLoadErr); err != nil {
+		return err
 	}
 	if m.saveConfig == nil {
 		return nil
 	}
 	return m.saveConfig(m.app.Config)
+}
+
+// storeCredential follows the writeConfig rule, so a broken config never ends up half saved.
+func (m *Model) storeCredential(secret string) error {
+	return saveCredential(m.secrets, m.providerID, m.configLoadErr, secret)
+}
+
+func saveCredential(store secrets.Store, id provider.ID, loadErr error, secret string) error {
+	if err := writesBlocked(loadErr); err != nil {
+		return err
+	}
+	return store.Set(string(id), secrets.CredentialKey, secret)
+}
+
+func writesBlocked(loadErr error) error {
+	if loadErr != nil {
+		return fmt.Errorf("fix or remove the config file first: %w", loadErr)
+	}
+	return nil
+}
+
+// providerConfig is the factory input for the active provider with the given credential.
+func (m Model) providerConfig(credential string) provider.Config {
+	return newProviderConfig(m.app.Config, m.providerID, credential, m.secrets, m.configLoadErr)
+}
+
+func newProviderConfig(cfg config.Config, id provider.ID, credential string, store secrets.Store, loadErr error) provider.Config {
+	return provider.Config{
+		Settings:       cfg.ProviderSettings(string(id)),
+		Credential:     credential,
+		SaveCredential: func(secret string) error { return saveCredential(store, id, loadErr, secret) },
+	}
 }
 
 func qualityLabel(q core.Quality) string {

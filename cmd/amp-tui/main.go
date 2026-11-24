@@ -10,9 +10,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/doctor"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/secrets"
 	"github.com/sfate/amp-tui/internal/tui"
 )
 
@@ -39,10 +41,16 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	if o.doctor {
-		return doctor.Run(context.Background(), os.Stdout, doctor.PlatformChecks())
+	secretsPath, err := config.SecretsFilePath()
+	if err != nil {
+		return err
 	}
-	_, err = tea.NewProgram(tui.New(tui.WithRegistry(newRegistry()))).Run()
+	if o.doctor {
+		checks := append(doctor.PlatformChecks(), doctor.SecretStoreCheck(secrets.NewKeyring(), secretsPath))
+		return doctor.Run(context.Background(), os.Stdout, checks)
+	}
+	model := tui.New(tui.WithRegistry(newRegistry()), tui.WithSecrets(secrets.Default(secretsPath)))
+	_, err = tea.NewProgram(model).Run()
 	return err
 }
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/provider"
 )
@@ -38,17 +37,17 @@ var (
 )
 
 func Register(reg *provider.Registry) {
-	reg.Register(ID, "Deezer", func(cfg config.Config) (provider.Provider, error) {
+	reg.Register(ID, "Deezer", func(cfg provider.Config) (provider.Provider, error) {
 		return New(cfg)
 	})
 }
 
-// New returns a signed-out provider when cfg has no ARL.
-func New(cfg config.Config) (*Provider, error) {
-	if strings.TrimSpace(cfg.ARL) == "" {
+// New reads the ARL from cfg.Credential and returns a signed-out provider without one.
+func New(cfg provider.Config) (*Provider, error) {
+	if strings.TrimSpace(cfg.Credential) == "" {
 		return &Provider{}, nil
 	}
-	client, err := NewClient(cfg.ARL, Options{})
+	client, err := NewClient(cfg.Credential, Options{})
 	if err != nil {
 		return nil, err
 	}

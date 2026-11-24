@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
 )
 
@@ -25,7 +24,7 @@ func (s stubProvider) Search(context.Context, string) (SearchResult, error) {
 }
 
 func stubFactory(id ID) Factory {
-	return func(config.Config) (Provider, error) { return stubProvider{id: id}, nil }
+	return func(Config) (Provider, error) { return stubProvider{id: id}, nil }
 }
 
 func TestRegistryLookupUnknownIDReturnsFalse(t *testing.T) {
@@ -39,7 +38,7 @@ func TestRegistryLookupUnknownIDReturnsFalse(t *testing.T) {
 	if !ok {
 		t.Fatal("expected registered provider ID to resolve")
 	}
-	p, err := f(config.Default())
+	p, err := f(Config{})
 	if err != nil || p.ID() != "one" {
 		t.Fatalf("unexpected provider %v, err %v", p, err)
 	}

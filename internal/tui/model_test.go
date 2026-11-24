@@ -20,6 +20,7 @@ import (
 	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/secrets"
 )
 
 type fakeLoader struct {
@@ -150,7 +151,7 @@ func (registryProvider) NormalizeSecret(input string) (string, error) {
 // testRegistry wires a fake provider, which works signed out without network.
 func testRegistry() *provider.Registry {
 	reg := provider.NewRegistry()
-	reg.Register("deezer", "Deezer", func(config.Config) (provider.Provider, error) {
+	reg.Register("deezer", "Deezer", func(provider.Config) (provider.Provider, error) {
 		return registryProvider{withStream(&fakeLoader{})}, nil
 	})
 	return reg
@@ -296,9 +297,9 @@ func TestViewShowsLoginScreenWhenARLMissing(t *testing.T) {
 func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 	model := NewWithConfig(config.Default(), WithRegistry(testRegistry()))
 	model.login.confirmOpen = false
-	model.factory = func(cfg config.Config) (provider.Provider, error) {
-		if cfg.ARL != "token-value" {
-			t.Fatalf("expected normalized ARL, got %q", cfg.ARL)
+	model.factory = func(cfg provider.Config) (provider.Provider, error) {
+		if cfg.Credential != "token-value" {
+			t.Fatalf("expected normalized ARL, got %q", cfg.Credential)
 		}
 		return &fakeLoader{bootstrap: provider.Library{Playlists: []app.Playlist{{ID: "1", Title: "Playlist"}}}}, nil
 	}
@@ -323,8 +324,8 @@ func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 	if model.login.active {
 		t.Fatal("expected login mode to close after successful validation")
 	}
-	if len(saved) != 1 || saved[0].ARL != "token-value" {
-		t.Fatalf("expected normalized ARL to be saved, got %#v", saved)
+	if stored, _ := model.secrets.Get("deezer", secrets.CredentialKey); len(saved) != 1 || stored != "token-value" {
+		t.Fatalf("expected config save and normalized ARL in the store, got %#v and %q", saved, stored)
 	}
 	if got := firstNonTickMsg(cmd); got == nil {
 		t.Fatal("expected successful login to start bootstrap/loading commands")
@@ -332,9 +333,7 @@ func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 }
 
 func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
-	cfg := config.Default()
-	cfg.ARL = "existing-token"
-	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.ready = true
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "O"}))
@@ -519,7 +518,7 @@ func TestQueueRowsUseQueuePanelWidth(t *testing.T) {
 }
 
 func TestQueueRowsRenderPrebufferIndicators(t *testing.T) {
-	model := NewWithProvider(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), withStream(&fakeLoader{}))
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -703,7 +702,7 @@ func TestCollectionTracksScrollUnderFixedHeader(t *testing.T) {
 
 func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 	cfg := config.Default()
-	cfg.DefaultQuality = testQuality320.ID
+	cfg.SetProviderSettings("fake", config.ProviderSettings{DefaultQuality: testQuality320.ID})
 	runtime := &fakePlaybackRuntime{}
 	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), runtime)
 	var saved []config.Config
@@ -717,10 +716,10 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
-	if updated.app.Config.DefaultQuality != testQualityFlac.ID {
-		t.Fatalf("expected quality to cycle to FLAC, got %s", updated.app.Config.DefaultQuality)
+	if got := updated.app.Config.ProviderSettings("fake").DefaultQuality; got != testQualityFlac.ID {
+		t.Fatalf("expected quality to cycle to FLAC, got %s", got)
 	}
-	if len(saved) != 1 || saved[0].DefaultQuality != testQualityFlac.ID {
+	if len(saved) != 1 || saved[0].ProviderSettings("fake").DefaultQuality != testQualityFlac.ID {
 		t.Fatalf("expected FLAC quality to be persisted, got %#v", saved)
 	}
 
@@ -2463,7 +2462,7 @@ func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
 }
 
 func TestReadyPrebufferStatusesEvictOldestWhenCacheLimitIsReached(t *testing.T) {
-	model := NewWithProvider(config.Default(), &fakeLoader{})
+	model := NewWithProvider(config.Default(), withStream(&fakeLoader{}))
 	for i := 1; i <= prebufferCacheStatusLimit+1; i++ {
 		model.setPrebufferStatus(fmt.Sprintf("%d", i), testQuality320, PrebufferStatusReady)
 	}
@@ -2876,10 +2875,9 @@ func TestBootstrapFailureRecovery(t *testing.T) {
 		{"network failure", errors.New("connection timed out"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.Default()
-			cfg.ARL = "saved-session"
 			loader := &failingBootstrapLoader{fakeLoader: &fakeLoader{}, err: tc.err}
-			model := NewWithProvider(cfg, loader)
+			model := NewWithProvider(config.Default(), loader)
+			_ = model.secrets.Set("fake", secrets.CredentialKey, "saved-session")
 			updatedModel, _ := model.Update(bootstrapCmd(loader)())
 			updated := updatedModel.(Model)
 			if updated.login.active != tc.login {
@@ -2904,7 +2902,7 @@ func TestBootstrapFailureRecovery(t *testing.T) {
 					t.Fatal("expected retry command")
 				}
 			}
-			if updated.app.Config.ARL != cfg.ARL {
+			if stored, _ := updated.secrets.Get("fake", secrets.CredentialKey); stored != "saved-session" {
 				t.Fatal("must preserve saved credentials until replacement")
 			}
 		})

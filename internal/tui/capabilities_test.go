@@ -149,7 +149,7 @@ func TestFullProviderStepsQualityAndKeepsSeekMessage(t *testing.T) {
 func TestLoginSuccessRecomputesCapabilities(t *testing.T) {
 	model := NewWithProvider(config.Default(), bareProvider())
 	model.saveConfig = func(config.Config) error { return nil }
-	model.onLoginSucceeded(loginSucceededMsg{cfg: model.app.Config, provider: withStream(&fakeLoader{})})
+	model.onLoginSucceeded(loginSucceededMsg{secret: "token", provider: withStream(&fakeLoader{})})
 	if !model.caps.QualityLadder || len(model.settingsRows()) != 7 {
 		t.Fatalf("caps = %+v, rows = %v; want ladder and 7 rows", model.caps, model.settingsRows())
 	}

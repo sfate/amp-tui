@@ -15,7 +15,6 @@ import (
 
 	"golang.org/x/crypto/blowfish" //nolint:staticcheck // Tests must mirror Deezer's legacy Blowfish stream encryption.
 
-	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/provider"
 )
@@ -142,7 +141,7 @@ func TestByteSourceOpenRangeFailsWhenServerIgnoresRange(t *testing.T) {
 }
 
 func TestProviderQualityLadder(t *testing.T) {
-	p, err := New(config.Default())
+	p, err := New(provider.Config{})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -323,7 +322,7 @@ func TestResolveWithoutDurationLeavesItZero(t *testing.T) {
 }
 
 func TestResolveRejectsUnknownQualityAndSignedOut(t *testing.T) {
-	p, err := New(config.Default())
+	p, err := New(provider.Config{})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}

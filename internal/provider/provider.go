@@ -73,5 +73,14 @@ type Authenticator interface {
 	BrowserLogin(ctx context.Context) (string, error)
 }
 
-// Factory returns a signed-out Provider when cfg holds no secret.
-type Factory func(cfg config.Config) (Provider, error)
+// Config is the input of a Factory; the TUI fills it from the config file and the secrets store.
+type Config struct {
+	Settings config.ProviderSettings
+	// Credential is the saved login secret; empty means signed out.
+	Credential string
+	// SaveCredential stores a replaced secret, such as a refreshed OAuth token.
+	SaveCredential func(string) error
+}
+
+// Factory returns a signed-out Provider when cfg has no Credential.
+type Factory func(cfg Config) (Provider, error)

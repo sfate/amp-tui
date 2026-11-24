@@ -16,7 +16,7 @@ type loginState struct {
 
 func (m *Model) onLoginSucceeded(msg loginSucceededMsg) tea.Cmd {
 	m.bootstrapFailed = false
-	m.app.Config = msg.cfg
+	m.app.Config.Provider = string(m.providerID)
 	m.setProvider(msg.provider)
 	m.setCatalog(catalogInfoOf(msg.provider))
 	m.runtime = newPlayerRuntime(msg.provider)
@@ -25,7 +25,11 @@ func (m *Model) onLoginSucceeded(msg loginSucceededMsg) tea.Cmd {
 	m.login.input = ""
 	m.ready = false
 	m.app.StatusMessage = fmt.Sprintf("Login saved. Loading %s library...", m.providerName())
-	if err := m.writeConfig(); err != nil {
+	err := m.storeCredential(msg.secret)
+	if err == nil {
+		err = m.writeConfig()
+	}
+	if err != nil {
 		m.app.StatusMessage = fmt.Sprintf("Login validated, but save failed: %v", err)
 		m.ready = true
 		return nil
@@ -89,7 +93,7 @@ func (m *Model) handleLoginInput(msg tea.KeyPressMsg) tea.Cmd {
 			m.login.confirmOpen = false
 			m.login.loading = true
 			m.app.StatusMessage = authn.LoginPrompt().BrowserWaitText + "..."
-			return browserLoginCmd(m.app.Config, authn, m.factory)
+			return browserLoginCmd(m.providerConfig(""), authn, m.factory)
 		case "p", "P":
 			m.app.StatusMessage = authn.LoginPrompt().PasteHint
 			return nil
@@ -121,11 +125,9 @@ func (m *Model) handleLoginInput(msg tea.KeyPressMsg) tea.Cmd {
 			m.app.StatusMessage = fmt.Sprintf("Login input error: %v", err)
 			return nil
 		}
-		cfg := m.app.Config
-		cfg.ARL = secret
 		m.login.loading = true
 		m.app.StatusMessage = fmt.Sprintf("Validating login %s...", authn.MaskSecret(secret))
-		return validateLoginCmd(cfg, m.factory)
+		return validateLoginCmd(m.providerConfig(secret), m.factory)
 	case "o", "O":
 		m.login.confirmOpen = true
 		m.login.input = ""
