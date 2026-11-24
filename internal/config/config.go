@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -85,19 +87,24 @@ func ConfigFilePath() (string, error) {
 	return filepath.Join(home, ".deezer-tui-config.json"), nil
 }
 
-func Load() Config {
+// Load reads the config file. A missing file gives defaults and no error.
+// A file that cannot be read or parsed gives defaults and an error; the caller must not save over it.
+func Load() (Config, error) {
 	path, err := ConfigFilePath()
 	if err != nil {
-		return Default()
+		return Default(), err
 	}
 	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Default(), nil
+	}
 	if err != nil {
-		return Default()
+		return Default(), fmt.Errorf("read %s: %w", path, err)
 	}
 
 	cfg := Default()
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Default()
+		return Default(), fmt.Errorf("parse %s: %w", path, err)
 	}
 	var raw map[string]json.RawMessage
 	_ = json.Unmarshal(data, &raw)
@@ -109,7 +116,7 @@ func Load() Config {
 		cfg.DisplayMode = NormalizeDisplayMode(cfg.DisplayMode, cfg.DisplayEnabled)
 	}
 	cfg.DisplayEnabled = cfg.DisplayMode != DisplayModeOff
-	return cfg
+	return cfg, nil
 }
 
 func Save(cfg Config) error {
