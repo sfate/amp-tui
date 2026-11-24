@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
 )
@@ -96,6 +94,9 @@ func (s *ListState) Selected() *int {
 	return s.selected
 }
 
+// NavItems are the sidebar Browse entries, in display order.
+var NavItems = []string{"Home", "Flow", "Explore", "Favorites", "Settings"}
+
 type Track struct {
 	ID        string
 	Title     string
@@ -103,6 +104,11 @@ type Track struct {
 	Album     string
 	Year      string
 	AddedAtMS *int64
+}
+
+// QueueLabel is the text of the track in the queue panel.
+func (t Track) QueueLabel() string {
+	return t.Title + " - " + t.Artist
 }
 
 type Playlist struct {
@@ -141,7 +147,6 @@ type App struct {
 	PlaylistState        ListState
 	QueueState           ListState
 	Playlists            []Playlist
-	Queue                []string
 	QueueTracks          []Track
 	QueueIndex           *int
 	CurrentTracks        []Track
@@ -177,7 +182,6 @@ func New(cfg config.Config) *App {
 		Volume:               100,
 		ActivePanel:          ActivePanelNavigation,
 		Playlists:            []Playlist{},
-		Queue:                []string{},
 		QueueTracks:          []Track{},
 		CurrentTracks:        []Track{},
 		SearchPlaylists:      []Playlist{},
@@ -213,23 +217,23 @@ func (a *App) HandleDown() {
 	switch a.ActivePanel {
 	case ActivePanelNavigation:
 		current := derefOrZero(a.NavState.Selected())
-		a.NavState.Select(intPtr(min(current+1, 4)))
+		a.NavState.Select(intPtr(min(current+1, len(NavItems)-1)))
 	case ActivePanelPlaylists:
 		if len(a.Playlists) == 0 {
 			return
 		}
 
-		max := len(a.Playlists) - 1
+		last := len(a.Playlists) - 1
 		current := derefOrZero(a.PlaylistState.Selected())
-		a.PlaylistState.Select(intPtr(min(current+1, max)))
+		a.PlaylistState.Select(intPtr(min(current+1, last)))
 	case ActivePanelQueue:
-		if len(a.Queue) == 0 {
+		if len(a.QueueTracks) == 0 {
 			return
 		}
 
-		max := len(a.Queue) - 1
+		last := len(a.QueueTracks) - 1
 		current := derefOrZero(a.QueueState.Selected())
-		a.QueueState.Select(intPtr(min(current+1, max)))
+		a.QueueState.Select(intPtr(min(current+1, last)))
 	case ActivePanelSearch:
 		a.ActivePanel = ActivePanelMain
 	case ActivePanelMain:
@@ -237,17 +241,17 @@ func (a *App) HandleDown() {
 			current := derefOrZero(a.SettingsState.Selected())
 			a.SettingsState.Select(intPtr(min(current+1, SettingsItemCount-1)))
 		} else if a.ShowingSearchResult {
-			max := 0
+			last := 0
 			switch a.SearchCategory {
 			case SearchCategoryTracks:
-				max = max0(len(a.CurrentTracks) - 1)
+				last = max(0, len(a.CurrentTracks)-1)
 			case SearchCategoryPlaylists:
-				max = max0(len(a.SearchPlaylists) - 1)
+				last = max(0, len(a.SearchPlaylists)-1)
 			case SearchCategoryArtists:
-				max = max0(len(a.SearchArtists) - 1)
+				last = max(0, len(a.SearchArtists)-1)
 			}
 			current := derefOrZero(a.MainState.Selected())
-			a.MainState.Select(intPtr(min(current+1, max)))
+			a.MainState.Select(intPtr(min(current+1, last)))
 		} else if len(a.CurrentTracks) > 0 {
 			current := derefOrZero(a.MainState.Selected())
 			a.MainState.Select(intPtr(min(current+1, len(a.CurrentTracks))))
@@ -262,34 +266,34 @@ func (a *App) HandleDown() {
 func (a *App) HandleUp() {
 	switch a.ActivePanel {
 	case ActivePanelQueue:
-		if len(a.Queue) == 0 {
+		if len(a.QueueTracks) == 0 {
 			return
 		}
 
 		current := derefOrZero(a.QueueState.Selected())
-		a.QueueState.Select(intPtr(max0(current - 1)))
+		a.QueueState.Select(intPtr(max(0, current-1)))
 	case ActivePanelPlaylists:
 		if len(a.Playlists) == 0 {
 			return
 		}
 
 		current := derefOrZero(a.PlaylistState.Selected())
-		a.PlaylistState.Select(intPtr(max0(current - 1)))
+		a.PlaylistState.Select(intPtr(max(0, current-1)))
 	case ActivePanelNavigation:
 		current := derefOrZero(a.NavState.Selected())
-		a.NavState.Select(intPtr(max0(current - 1)))
+		a.NavState.Select(intPtr(max(0, current-1)))
 	case ActivePanelSearch:
 		a.ActivePanel = ActivePanelNavigation
 	case ActivePanelMain:
 		if a.ViewingSettings {
 			current := derefOrZero(a.SettingsState.Selected())
-			a.SettingsState.Select(intPtr(max0(current - 1)))
+			a.SettingsState.Select(intPtr(max(0, current-1)))
 		} else if a.ShowingSearchResult {
 			current := derefOrZero(a.MainState.Selected())
-			a.MainState.Select(intPtr(max0(current - 1)))
+			a.MainState.Select(intPtr(max(0, current-1)))
 		} else if len(a.CurrentTracks) > 0 {
 			current := derefOrZero(a.MainState.Selected())
-			a.MainState.Select(intPtr(max0(current - 1)))
+			a.MainState.Select(intPtr(max(0, current-1)))
 		}
 	case ActivePanelPlayer:
 		a.ActivePanel = ActivePanelMain
@@ -343,7 +347,7 @@ func (a *App) HandleLeft() {
 			a.ActivePanel = ActivePanelQueue
 		}
 	case ActivePanelPlayer:
-		a.PlayerButtonIndex = max0(a.PlayerButtonIndex - 1)
+		a.PlayerButtonIndex = max(0, a.PlayerButtonIndex-1)
 	case ActivePanelPlayerProgress:
 		a.ActivePanel = ActivePanelPlayer
 	case ActivePanelPlayerInfo:
@@ -389,7 +393,6 @@ func (a *App) LoadFlowTracks(tracks []Track, autoplay bool) *string {
 
 	if autoplay && len(a.CurrentTracks) > 0 {
 		a.QueueTracks = cloneTracks(a.CurrentTracks)
-		a.Queue = formatQueue(a.QueueTracks)
 		a.QueueIndex = intPtr(0)
 		a.QueueState.Select(intPtr(0))
 		a.IsPlaying = true
@@ -432,7 +435,6 @@ func (a *App) AppendFlowTracks(tracks []Track, autoplay bool) FlowAppendResult {
 		a.CurrentTracks = append(a.CurrentTracks, cloneTracks(appendedTracks)...)
 	}
 	a.QueueTracks = append(a.QueueTracks, cloneTracks(appendedTracks)...)
-	a.Queue = append(a.Queue, formatQueue(appendedTracks)...)
 
 	result := FlowAppendResult{
 		AppendedCount: len(appendedTracks),
@@ -476,14 +478,6 @@ func (a *App) ShouldLoadMoreFlow() bool {
 	return *a.QueueIndex+1 >= len(a.QueueTracks)
 }
 
-func formatQueue(tracks []Track) []string {
-	queue := make([]string, 0, len(tracks))
-	for _, track := range tracks {
-		queue = append(queue, fmt.Sprintf("%s - %s", track.Title, track.Artist))
-	}
-	return queue
-}
-
 func (a *App) trimFlowQueue() {
 	if !a.IsFlowQueue || len(a.QueueTracks) <= flowQueueMaxTracks {
 		return
@@ -495,7 +489,7 @@ func (a *App) trimFlowQueue() {
 	if current >= len(a.QueueTracks) {
 		current = len(a.QueueTracks) - 1
 	}
-	start := max0(current - flowQueuePreviousLimit)
+	start := max(0, current-flowQueuePreviousLimit)
 	if remaining := len(a.QueueTracks) - start; remaining > flowQueueMaxTracks {
 		start = len(a.QueueTracks) - flowQueueMaxTracks
 	}
@@ -503,19 +497,18 @@ func (a *App) trimFlowQueue() {
 		return
 	}
 	a.QueueTracks = cloneTracks(a.QueueTracks[start:])
-	a.Queue = append([]string(nil), a.Queue[start:]...)
 	if a.CurrentPlaylistID != nil && *a.CurrentPlaylistID == "__flow__" {
 		a.CurrentTracks = cloneTracks(a.QueueTracks)
 		selected := derefOrZero(a.MainState.Selected())
 		if selected > 0 {
-			a.MainState.Select(intPtr(max0(selected - start)))
+			a.MainState.Select(intPtr(max(0, selected-start)))
 		}
 	}
 	if a.QueueIndex != nil {
-		a.QueueIndex = intPtr(max0(*a.QueueIndex - start))
+		a.QueueIndex = intPtr(max(0, *a.QueueIndex-start))
 	}
 	selected := derefOrZero(a.QueueState.Selected())
-	a.QueueState.Select(intPtr(max0(selected - start)))
+	a.QueueState.Select(intPtr(max(0, selected-start)))
 }
 
 func cloneTracks(tracks []Track) []Track {
@@ -537,18 +530,4 @@ func derefOrZero(v *int) int {
 		return 0
 	}
 	return *v
-}
-
-func max0(v int) int {
-	if v < 0 {
-		return 0
-	}
-	return v
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
