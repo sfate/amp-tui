@@ -118,7 +118,7 @@ func TestRadioSectionWithoutInfiniteRadioDoesNotLoadMore(t *testing.T) {
 
 func TestProviderWithoutStreamSourceHasNoRuntime(t *testing.T) {
 	prov := &plainProvider{sections: []provider.Section{{ID: "library", Label: "Library", Kind: provider.SectionTracks}}}
-	model := NewWithProvider(config.Default(), prov)
+	model := NewWithProviderAndEngine(config.Default(), prov, newFakeEngine())
 	if model.runtime != nil {
 		t.Fatalf("expected no runtime for a provider without StreamSource, got %T", model.runtime)
 	}
@@ -129,8 +129,11 @@ func TestProviderWithoutStreamSourceHasNoRuntime(t *testing.T) {
 	if model.app.StatusMessage != "Playback runtime is not configured" {
 		t.Fatalf("unexpected status %q", model.app.StatusMessage)
 	}
-	if newPlayerRuntime(withStream(&fakeLoader{})) == nil {
+	if newPlayerRuntime(newFakeEngine(), withStream(&fakeLoader{})) == nil {
 		t.Fatal("expected a runtime for a provider with StreamSource")
+	}
+	if newPlayerRuntime(nil, withStream(&fakeLoader{})) != nil {
+		t.Fatal("expected no runtime without an engine")
 	}
 }
 
@@ -144,8 +147,8 @@ func twoStepProvider() *fakeStreamLoader {
 }
 
 func TestQualityUpStopsAtTopOfProviderLadder(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), twoStepProvider(), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), twoStepProvider(), runtime)
 	model.width = 120
 	model.height = 40
 	model.currentTrackID = "track-1"
@@ -173,24 +176,24 @@ func TestQualityUpStopsAtTopOfProviderLadder(t *testing.T) {
 		t.Fatal("expected quality-down to restart playback")
 	}
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != fakeLow {
-		t.Fatalf("expected a switch to the lower step, got %#v", runtime.qualities)
+	if len(runtime.qualities()) != 1 || runtime.qualities()[0] != fakeLow {
+		t.Fatalf("expected a switch to the lower step, got %#v", runtime.qualities())
 	}
 }
 
 func TestConfiguredQualityOutsideLadderUsesProviderDefault(t *testing.T) {
 	cfg := config.Default()
 	cfg.SetProviderSettings("fake", config.ProviderSettings{DefaultQuality: "Flac"})
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(cfg, twoStepProvider(), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(cfg, twoStepProvider(), runtime)
 
 	cmd := model.startTrackPlayback("track-1")
 	if cmd == nil {
 		t.Fatal("expected playback command")
 	}
 	_, _ = model.Update(firstBatchMessage(cmd))
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != fakeHigh {
-		t.Fatalf("expected the provider default quality, got %#v", runtime.qualities)
+	if len(runtime.qualities()) != 1 || runtime.qualities()[0] != fakeHigh {
+		t.Fatalf("expected the provider default quality, got %#v", runtime.qualities())
 	}
 	for _, row := range model.renderSettingsRows() {
 		if strings.Contains(row, "Quality") && !strings.Contains(row, "Fake Hi-Fi") {

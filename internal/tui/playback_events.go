@@ -75,7 +75,7 @@ func (m *Model) onPlaybackTrackChanged(msg playbackTrackChangedMsg) tea.Cmd {
 		TotalMS:     msg.info.DurationMS,
 		AlbumArtURL: msg.info.AlbumArtURL,
 	}
-	if _, ok := m.runtime.(PrebufferingRuntime); ok {
+	if _, ok := m.runtime.prebufferer(); ok {
 		m.setPrebufferStatus(msg.info.ID, msg.quality, PrebufferStatusReady)
 	}
 	m.progress.bufferingPercent = nil

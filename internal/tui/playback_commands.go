@@ -7,21 +7,21 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/core"
-	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/playback"
 )
 
-func startPlaybackCmdWithEvents(playID int, trackID string, runtime PlayerRuntime, quality core.Quality, seekMS uint64, enableVisualizer bool, events chan tea.Msg) tea.Cmd {
+func startPlaybackCmdWithEvents(playID int, trackID string, runtime *playerRuntime, quality core.Quality, seekMS uint64, enableVisualizer bool, events chan tea.Msg) tea.Cmd {
 	if runtime == nil {
 		return nil
 	}
 	return func() tea.Msg {
 		var visualizerMu sync.Mutex
 		var lastVisualizerSent time.Time
-		handler := player.EventHandler{
+		handler := playback.EventHandler{
 			OnTrackChanged: func(info core.TrackInfo, q core.Quality, initialMS uint64) {
 				events <- playbackTrackChangedMsg{playID: playID, info: info, quality: q, initialMS: initialMS}
 			},
-			OnBufferingProgress: func(percent uint8, stage player.BufferingStage) {
+			OnBufferingProgress: func(percent uint8, stage playback.BufferingStage) {
 				events <- bufferingProgressMsg{playID: playID, percent: percent, stage: stage}
 			},
 			OnPlaybackProgress: func(currentMS, totalMS uint64) {
@@ -48,7 +48,7 @@ func startPlaybackCmdWithEvents(playID int, trackID string, runtime PlayerRuntim
 				}
 			}
 		}
-		session, err := runtime.Start(trackID, quality, seekMS, handler)
+		session, err := runtime.start(trackID, quality, seekMS, handler)
 		if err != nil {
 			return playbackStartFailedMsg{playID: playID, trackID: trackID, quality: quality, err: err}
 		}
@@ -56,7 +56,7 @@ func startPlaybackCmdWithEvents(playID int, trackID string, runtime PlayerRuntim
 	}
 }
 
-func waitPlaybackCmd(playID int, session PlaybackSession) tea.Cmd {
+func waitPlaybackCmd(playID int, session playback.Session) tea.Cmd {
 	if session == nil {
 		return nil
 	}

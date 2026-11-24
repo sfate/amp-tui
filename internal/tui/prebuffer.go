@@ -7,6 +7,7 @@ import (
 
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback"
 )
 
 const (
@@ -83,39 +84,47 @@ func (m *Model) prebufferTrackWindowFrom(tracks []app.Track, start int) tea.Cmd 
 }
 
 func (m *Model) prebufferTrackWindowFromLimit(tracks []app.Track, start int, limit int) tea.Cmd {
-	runtime, ok := m.runtime.(PrebufferingRuntime)
+	prebufferer, ok := m.runtime.prebufferer()
 	if !ok {
 		return nil
 	}
 	if start < 0 || start >= len(tracks) {
-		runtime.Prebuffer(nil, m.configuredQuality(), m.playbackEvents)
+		prebufferer.Prebuffer(nil, nil)
 		return nil
 	}
 	if limit <= 0 {
 		limit = prebufferWindowSize
 	}
 	end := min(len(tracks), start+limit)
-	trackIDs := make([]string, 0, end-start)
+	quality := m.configuredQuality()
+	window := make([]playback.Track, 0, end-start)
 	for _, track := range tracks[start:end] {
 		if strings.TrimSpace(track.ID) == "" {
 			continue
 		}
-		trackIDs = append(trackIDs, track.ID)
+		m.setPrebufferStatus(track.ID, quality, PrebufferStatusScheduled)
+		window = append(window, m.runtime.track(track.ID, quality))
 	}
-	quality := m.configuredQuality()
-	for _, trackID := range trackIDs {
-		m.setPrebufferStatus(trackID, quality, PrebufferStatusScheduled)
-	}
-	runtime.Prebuffer(trackIDs, quality, m.playbackEvents)
-	if len(trackIDs) > 0 {
+	prebufferer.Prebuffer(window, prebufferStatusSender(m.playbackEvents))
+	if len(window) > 0 {
 		return listenPlaybackEventCmd(m.playbackEvents)
 	}
 	return nil
 }
 
+// prebufferStatusSender drops a status when the event queue is full, as the queue indicator is cosmetic.
+func prebufferStatusSender(events chan<- tea.Msg) func(playback.Track, playback.PrebufferStatus) {
+	return func(track playback.Track, status playback.PrebufferStatus) {
+		select {
+		case events <- prebufferStatusMsg{trackID: track.ID, quality: track.Quality, status: prebufferStatusFrom(status)}:
+		default:
+		}
+	}
+}
+
 func (m *Model) cancelPrebufferWindow() {
-	if runtime, ok := m.runtime.(PrebufferingRuntime); ok {
-		runtime.Prebuffer(nil, m.configuredQuality(), m.playbackEvents)
+	if prebufferer, ok := m.runtime.prebufferer(); ok {
+		prebufferer.Prebuffer(nil, nil)
 	}
 }
 

@@ -1,6 +1,6 @@
 //go:build darwin
 
-package tui
+package native
 
 import (
 	"bufio"
@@ -18,9 +18,8 @@ import (
 	"sync"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
 )
@@ -28,60 +27,87 @@ import (
 //go:embed mac_player_helper.swift
 var macPlayerHelperSource string
 
-type defaultPlayerRuntime struct {
-	streams   provider.StreamSource
-	manager   *darwinHelperManager
+// Engine plays prepared temp files through the Swift helper, which also serves Now Playing.
+type Engine struct {
+	player filePlayer
+	media  *darwinHelperManager
+
+	mu        sync.Mutex
 	prebuffer *darwinPrebufferStore
 }
 
-func newPlayerRuntime(p provider.Provider) PlayerRuntime {
-	streams, ok := p.(provider.StreamSource)
-	if !ok {
-		return nil
-	}
-	return &defaultPlayerRuntime{
-		streams:   streams,
-		manager:   newDarwinHelperManager(),
-		prebuffer: newDarwinPrebufferStore(),
-	}
+var (
+	_ playback.Engine          = (*Engine)(nil)
+	_ playback.Prebufferer     = (*Engine)(nil)
+	_ playback.MediaController = (*Engine)(nil)
+)
+
+// filePlayer is the helper side of a session; tests replace the helper process with it.
+type filePlayer interface {
+	play(path string, volume float32, seekMS uint64) (int, <-chan error, error)
+	pause(token int) error
+	resume(token int) error
+	stop(token int) error
+	setVolume(token int, volume float32) error
 }
 
-func (r *defaultPlayerRuntime) Start(trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
+// New starts no process; the helper compiles and starts on first use.
+func New() *Engine {
+	manager := newDarwinHelperManager()
+	return &Engine{player: manager, media: manager, prebuffer: newDarwinPrebufferStore()}
+}
+
+func newEngineWith(player filePlayer) *Engine {
+	return &Engine{player: player, prebuffer: newDarwinPrebufferStore()}
+}
+
+func (e *Engine) Name() string { return engineName }
+
+func (e *Engine) Capabilities() playback.EngineCaps { return capabilities }
+
+func (e *Engine) Start(ctx context.Context, source provider.Source, opts playback.StartOptions, handler playback.EventHandler) (playback.Session, error) {
 	session := &darwinPlaybackSession{
-		done:    make(chan error, 1),
-		volume:  1,
-		manager: r.manager,
+		done:   make(chan error, 1),
+		volume: 1,
+		paused: opts.Paused,
+		player: e.player,
 	}
-	go session.run(r.streams, r.prebuffer, trackID, quality, seekMS, handler)
+	go session.run(ctx, e.currentPrebuffer(), source, opts.StartMS, handler)
 	return session, nil
 }
 
-func (r *defaultPlayerRuntime) Prebuffer(trackIDs []string, quality core.Quality, events chan<- tea.Msg) {
-	if r.prebuffer == nil {
-		return
-	}
-	r.prebuffer.Prebuffer(context.Background(), r.streams, trackIDs, quality, events)
+func (e *Engine) Prebuffer(tracks []playback.Track, onStatus func(playback.Track, playback.PrebufferStatus)) {
+	e.currentPrebuffer().Prebuffer(context.Background(), tracks, onStatus)
 }
 
-func (r *defaultPlayerRuntime) MediaControlEvents() <-chan MediaControlCommand {
-	if r.manager == nil {
+// ClearPrebuffer closes the store so in-flight jobs drop their files, then starts an empty one.
+func (e *Engine) ClearPrebuffer() {
+	e.mu.Lock()
+	old := e.prebuffer
+	e.prebuffer = newDarwinPrebufferStore()
+	e.mu.Unlock()
+	old.Close()
+}
+
+func (e *Engine) currentPrebuffer() *darwinPrebufferStore {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.prebuffer
+}
+
+func (e *Engine) MediaCommands() <-chan playback.MediaCommand {
+	if e.media == nil {
 		return nil
 	}
-	r.manager.startAsync()
-	return r.manager.mediaEvents
+	e.media.startAsync()
+	return e.media.mediaEvents
 }
 
-func (r *defaultPlayerRuntime) UpdateMediaControl(state MediaControlState) {
-	if r.manager == nil {
+func (e *Engine) UpdateMediaState(state playback.MediaState) {
+	if e.media == nil {
 		return
 	}
-	r.manager.updateMediaControl(state)
-}
-
-func (r *defaultPlayerRuntime) Shutdown() {
-	if r.prebuffer != nil {
-		r.prebuffer.Close()
-	}
+	e.media.updateMediaControl(state)
 }
 
 type darwinPlaybackSession struct {
@@ -92,18 +118,17 @@ type darwinPlaybackSession struct {
 	volume          float32
 	done            chan error
 	token           int
-	manager         *darwinHelperManager
+	player          filePlayer
 	finished        bool
 	visualizerStop  chan struct{}
 	visualizerPause chan bool
 	visualizerOnce  sync.Once
 }
 
-func (s *darwinPlaybackSession) run(streams provider.StreamSource, prebuffer *darwinPrebufferStore, trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) {
+func (s *darwinPlaybackSession) run(ctx context.Context, prebuffer *darwinPrebufferStore, source provider.Source, seekMS uint64, handler playback.EventHandler) {
 	defer close(s.done)
 
-	ctx := context.Background()
-	prepared, err := prebuffer.TakeOrPrepare(ctx, streams, trackID, quality, handler.OnBufferingProgress)
+	prepared, err := prebuffer.TakeOrPrepareSource(ctx, source, handler.OnBufferingProgress)
 	if err != nil {
 		s.done <- err
 		return
@@ -125,9 +150,19 @@ func (s *darwinPlaybackSession) run(streams provider.StreamSource, prebuffer *da
 	if handler.OnTrackChanged != nil {
 		handler.OnTrackChanged(info, prepared.Quality, initialMS)
 	}
-	s.file = prepared.File
 
-	token, finishCh, err := s.manager.play(s.file, s.volume, initialMS)
+	// A play call replaces the helper's current track, so a session stopped while preparing must not make one.
+	s.mu.Lock()
+	s.file = prepared.File
+	stopped := s.stopped
+	volume := s.volume
+	s.mu.Unlock()
+	if stopped {
+		s.done <- context.Canceled
+		return
+	}
+
+	token, finishCh, err := s.player.play(prepared.File, volume, initialMS)
 	if err != nil {
 		s.done <- err
 		return
@@ -135,16 +170,16 @@ func (s *darwinPlaybackSession) run(streams provider.StreamSource, prebuffer *da
 	s.mu.Lock()
 	s.token = token
 	paused := s.paused
-	stopped := s.stopped
+	stopped = s.stopped
 	s.mu.Unlock()
 
 	if stopped {
-		_ = s.manager.stop(token)
+		_ = s.player.stop(token)
 		s.done <- context.Canceled
 		return
 	}
 	if paused {
-		_ = s.manager.pause(token)
+		_ = s.player.pause(token)
 	}
 
 	if handler.OnPlaybackProgress != nil {
@@ -164,7 +199,7 @@ func (s *darwinPlaybackSession) run(streams provider.StreamSource, prebuffer *da
 		}
 		s.mu.Unlock()
 		if startVisualizer {
-			go player.StreamVisualizerFile(s.file, prepared.Format, initialMS, stop, pause, handler.OnAudioBands)
+			go player.StreamVisualizerFile(prepared.File, prepared.Format, initialMS, stop, pause, handler.OnAudioBands)
 			defer s.stopVisualizer()
 		}
 	}
@@ -197,7 +232,7 @@ func (s *darwinPlaybackSession) Pause() {
 	s.paused = true
 	s.sendVisualizerPauseLocked(true)
 	if s.token != 0 {
-		_ = s.manager.pause(s.token)
+		_ = s.player.pause(s.token)
 	}
 }
 
@@ -207,7 +242,7 @@ func (s *darwinPlaybackSession) Resume() {
 	s.paused = false
 	s.sendVisualizerPauseLocked(false)
 	if s.token != 0 {
-		_ = s.manager.resume(s.token)
+		_ = s.player.resume(s.token)
 	}
 }
 
@@ -220,9 +255,11 @@ func (s *darwinPlaybackSession) Stop() {
 		return
 	}
 	if s.token != 0 {
-		_ = s.manager.stop(s.token)
+		_ = s.player.stop(s.token)
 	}
 }
+
+func (s *darwinPlaybackSession) Seek(uint64) error { return playback.ErrSeekUnsupported }
 
 func (s *darwinPlaybackSession) stopVisualizer() {
 	s.mu.Lock()
@@ -287,7 +324,7 @@ func (s *darwinPlaybackSession) SetVolume(v float32) {
 	}
 	s.volume = v
 	if s.token != 0 {
-		_ = s.manager.setVolume(s.token, v)
+		_ = s.player.setVolume(s.token, v)
 	}
 }
 
@@ -298,7 +335,7 @@ type darwinHelperManager struct {
 	waitErrCh   chan error
 	nextToken   int
 	current     *darwinPlayHandle
-	mediaEvents chan MediaControlCommand
+	mediaEvents chan playback.MediaCommand
 }
 
 type darwinPlayHandle struct {
@@ -309,7 +346,7 @@ type darwinPlayHandle struct {
 func newDarwinHelperManager() *darwinHelperManager {
 	return &darwinHelperManager{
 		nextToken:   1,
-		mediaEvents: make(chan MediaControlCommand, 16),
+		mediaEvents: make(chan playback.MediaCommand, 16),
 	}
 }
 
@@ -365,7 +402,7 @@ func (m *darwinHelperManager) setVolume(token int, volume float32) error {
 	return m.simpleCommand(token, "volume\t"+strconv.FormatFloat(float64(volume), 'f', 4, 32))
 }
 
-func (m *darwinHelperManager) updateMediaControl(state MediaControlState) {
+func (m *darwinHelperManager) updateMediaControl(state playback.MediaState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.ensureStartedLocked(); err != nil {
@@ -502,20 +539,20 @@ func (m *darwinHelperManager) emitRemoteCommand(parts []string) {
 	if len(parts) < 2 {
 		return
 	}
-	command := MediaControlCommand{}
+	command := playback.MediaCommand{}
 	switch parts[1] {
 	case "play":
-		command.Kind = MediaControlPlay
+		command.Kind = playback.MediaPlay
 	case "pause":
-		command.Kind = MediaControlPause
+		command.Kind = playback.MediaPause
 	case "toggle":
-		command.Kind = MediaControlToggle
+		command.Kind = playback.MediaToggle
 	case "next":
-		command.Kind = MediaControlNext
+		command.Kind = playback.MediaNext
 	case "previous":
-		command.Kind = MediaControlPrevious
+		command.Kind = playback.MediaPrevious
 	case "setPosition":
-		command.Kind = MediaControlSetPosition
+		command.Kind = playback.MediaSetPosition
 		if len(parts) > 2 {
 			command.PositionMS, _ = strconv.ParseUint(parts[2], 10, 64)
 		}
@@ -575,20 +612,18 @@ type darwinPreparedTrack struct {
 }
 
 type darwinPrebufferJob struct {
-	trackID string
-	quality core.Quality
-	done    chan struct{}
-	result  *darwinPreparedTrack
-	err     error
-	cancel  context.CancelFunc
-	events  chan<- tea.Msg
+	track    playback.Track
+	done     chan struct{}
+	result   *darwinPreparedTrack
+	err      error
+	cancel   context.CancelFunc
+	onStatus func(playback.Track, playback.PrebufferStatus)
 }
 
 type darwinPrebufferRequest struct {
-	key     string
-	trackID string
-	quality core.Quality
-	events  chan<- tea.Msg
+	key      string
+	track    playback.Track
+	onStatus func(playback.Track, playback.PrebufferStatus)
 }
 
 type darwinPrebufferStore struct {
@@ -612,30 +647,29 @@ func newDarwinPrebufferStore() *darwinPrebufferStore {
 	}
 }
 
-func (s *darwinPrebufferStore) Prebuffer(ctx context.Context, streams provider.StreamSource, trackIDs []string, quality core.Quality, events chan<- tea.Msg) {
+func (s *darwinPrebufferStore) Prebuffer(ctx context.Context, tracks []playback.Track, onStatus func(playback.Track, playback.PrebufferStatus)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.closed {
 		return
 	}
-	if len(trackIDs) == 0 {
+	if len(tracks) == 0 {
 		s.cancelPendingLocked()
 		return
 	}
 
-	keep := map[string]string{}
-	ordered := make([]string, 0, len(trackIDs))
-	for _, trackID := range trackIDs {
-		trackID = strings.TrimSpace(trackID)
-		if trackID == "" {
+	keep := map[string]playback.Track{}
+	ordered := make([]string, 0, len(tracks))
+	for _, track := range tracks {
+		if strings.TrimSpace(track.ID) == "" {
 			continue
 		}
-		key := darwinPrebufferKey(trackID, quality)
+		key := darwinPrebufferKey(track)
 		if _, ok := keep[key]; ok {
 			continue
 		}
-		keep[key] = trackID
+		keep[key] = track
 		ordered = append(ordered, key)
 	}
 	if len(keep) == 0 {
@@ -652,9 +686,9 @@ func (s *darwinPrebufferStore) Prebuffer(ctx context.Context, streams provider.S
 	s.retainPendingLocked(keep)
 
 	for _, key := range ordered {
-		trackID := keep[key]
+		track := keep[key]
 		if _, ok := s.current[key]; ok {
-			sendPrebufferStatus(events, trackID, quality, PrebufferStatusReady)
+			sendPrebufferStatus(onStatus, track, playback.PrebufferReady)
 			continue
 		}
 		if _, ok := s.inflight[key]; ok {
@@ -664,17 +698,16 @@ func (s *darwinPrebufferStore) Prebuffer(ctx context.Context, streams provider.S
 			continue
 		}
 		s.pending = append(s.pending, darwinPrebufferRequest{
-			key:     key,
-			trackID: trackID,
-			quality: quality,
-			events:  events,
+			key:      key,
+			track:    track,
+			onStatus: onStatus,
 		})
 	}
-	s.startPendingLocked(ctx, streams)
+	s.startPendingLocked(ctx)
 }
 
-func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, streams provider.StreamSource, trackID string, quality core.Quality, onBufferingProgress func(uint8, player.BufferingStage)) (*darwinPreparedTrack, error) {
-	key := darwinPrebufferKey(trackID, quality)
+func (s *darwinPrebufferStore) TakeOrPrepareSource(ctx context.Context, source provider.Source, onBufferingProgress func(uint8, playback.BufferingStage)) (*darwinPreparedTrack, error) {
+	key := darwinSourcePrebufferKey(source)
 	for {
 		s.mu.Lock()
 		if prepared, ok := s.current[key]; ok {
@@ -682,14 +715,14 @@ func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, streams provid
 			s.rememberCachedLocked(key)
 			s.mu.Unlock()
 			if onBufferingProgress != nil {
-				onBufferingProgress(100, player.BufferingStageReady)
+				onBufferingProgress(100, playback.BufferingStageReady)
 			}
 			return prepared, nil
 		}
 		if job, ok := s.inflight[key]; ok {
 			s.mu.Unlock()
 			if onBufferingProgress != nil {
-				onBufferingProgress(80, player.BufferingStageDownloading)
+				onBufferingProgress(80, playback.BufferingStageDownloading)
 			}
 			<-job.done
 			if job.err != nil {
@@ -698,7 +731,7 @@ func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, streams provid
 			continue
 		}
 		s.mu.Unlock()
-		prepared, err := prepareDarwinTrackFile(ctx, streams, trackID, quality, onBufferingProgress)
+		prepared, err := prepareDarwinSourceFile(ctx, source, onBufferingProgress)
 		if err != nil {
 			return nil, err
 		}
@@ -729,14 +762,14 @@ func (s *darwinPrebufferStore) TakeOrPrepare(ctx context.Context, streams provid
 	}
 }
 
-func (s *darwinPrebufferStore) runJob(ctx context.Context, streams provider.StreamSource, job *darwinPrebufferJob) {
+func (s *darwinPrebufferStore) runJob(ctx context.Context, job *darwinPrebufferJob) {
 	defer close(job.done)
 
-	result, err := prepareDarwinTrackFile(ctx, streams, job.trackID, job.quality, nil)
+	result, err := prepareDarwinTrackFile(ctx, job.track, nil)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := darwinPrebufferKey(job.trackID, job.quality)
+	key := darwinPrebufferKey(job.track)
 	if s.closed || s.inflight[key] != job {
 		if result != nil && result.File != "" {
 			_ = os.Remove(result.File)
@@ -747,8 +780,8 @@ func (s *darwinPrebufferStore) runJob(ctx context.Context, streams provider.Stre
 	job.err = err
 	job.result = result
 	if err != nil {
-		sendPrebufferStatus(job.events, job.trackID, job.quality, PrebufferStatusFailed)
-		s.startPendingLocked(context.Background(), streams)
+		sendPrebufferStatus(job.onStatus, job.track, playback.PrebufferFailed)
+		s.startPendingLocked(context.Background())
 		return
 	}
 	if old := s.current[key]; old != nil && old.File != "" {
@@ -756,8 +789,8 @@ func (s *darwinPrebufferStore) runJob(ctx context.Context, streams provider.Stre
 	}
 	s.current[key] = result
 	s.rememberCachedLocked(key)
-	sendPrebufferStatus(job.events, job.trackID, job.quality, PrebufferStatusReady)
-	s.startPendingLocked(context.Background(), streams)
+	sendPrebufferStatus(job.onStatus, job.track, playback.PrebufferReady)
+	s.startPendingLocked(context.Background())
 }
 
 func (s *darwinPrebufferStore) cancelPendingLocked() {
@@ -807,12 +840,12 @@ func (s *darwinPrebufferStore) removeCachedOrderLocked(key string) {
 	}
 }
 
-func (s *darwinPrebufferStore) startPendingLocked(ctx context.Context, streams provider.StreamSource) {
+func (s *darwinPrebufferStore) startPendingLocked(ctx context.Context) {
 	for len(s.pending) > 0 && len(s.inflight) < maxDarwinPrebufferInflight {
 		req := s.pending[0]
 		s.pending = s.pending[1:]
 		if _, ok := s.current[req.key]; ok {
-			sendPrebufferStatus(req.events, req.trackID, req.quality, PrebufferStatusReady)
+			sendPrebufferStatus(req.onStatus, req.track, playback.PrebufferReady)
 			continue
 		}
 		if _, ok := s.inflight[req.key]; ok {
@@ -820,19 +853,18 @@ func (s *darwinPrebufferStore) startPendingLocked(ctx context.Context, streams p
 		}
 		jobCtx, cancel := context.WithCancel(ctx)
 		job := &darwinPrebufferJob{
-			trackID: req.trackID,
-			quality: req.quality,
-			done:    make(chan struct{}),
-			cancel:  cancel,
-			events:  req.events,
+			track:    req.track,
+			done:     make(chan struct{}),
+			cancel:   cancel,
+			onStatus: req.onStatus,
 		}
 		s.inflight[req.key] = job
-		sendPrebufferStatus(req.events, req.trackID, req.quality, PrebufferStatusLoading)
-		go s.runJob(jobCtx, streams, job)
+		sendPrebufferStatus(req.onStatus, req.track, playback.PrebufferLoading)
+		go s.runJob(jobCtx, job)
 	}
 }
 
-func (s *darwinPrebufferStore) retainPendingLocked(keep map[string]string) {
+func (s *darwinPrebufferStore) retainPendingLocked(keep map[string]playback.Track) {
 	if len(s.pending) == 0 {
 		return
 	}
@@ -854,39 +886,48 @@ func (s *darwinPrebufferStore) pendingContainsLocked(key string) bool {
 	return false
 }
 
-func darwinPrebufferKey(trackID string, quality core.Quality) string {
-	return quality.ID + "\x00" + trackID
+func darwinPrebufferKey(track playback.Track) string {
+	return track.Quality.ID + "\x00" + track.ID
 }
 
-func sendPrebufferStatus(events chan<- tea.Msg, trackID string, quality core.Quality, status PrebufferStatus) {
-	if events == nil {
-		return
-	}
-	select {
-	case events <- prebufferStatusMsg{trackID: trackID, quality: quality, status: status}:
-	default:
+func darwinSourcePrebufferKey(source provider.Source) string {
+	return source.Quality.ID + "\x00" + source.Info.ID
+}
+
+func sendPrebufferStatus(onStatus func(playback.Track, playback.PrebufferStatus), track playback.Track, status playback.PrebufferStatus) {
+	if onStatus != nil {
+		onStatus(track, status)
 	}
 }
 
 // prepareDarwinTrackFile writes the resolved track to a temp file, because the Swift helper plays files.
-func prepareDarwinTrackFile(ctx context.Context, streams provider.StreamSource, trackID string, quality core.Quality, onBufferingProgress func(uint8, player.BufferingStage)) (*darwinPreparedTrack, error) {
-	report := func(percent uint8, stage player.BufferingStage) {
+func prepareDarwinTrackFile(ctx context.Context, track playback.Track, onBufferingProgress func(uint8, playback.BufferingStage)) (*darwinPreparedTrack, error) {
+	report := func(percent uint8, stage playback.BufferingStage) {
 		if onBufferingProgress != nil {
 			onBufferingProgress(percent, stage)
 		}
 	}
-	if streams == nil {
+	if track.Resolve == nil {
 		return nil, errors.New("provider does not stream audio")
 	}
-	report(0, player.BufferingStageResolving)
-	src, err := streams.Resolve(ctx, trackID, quality)
+	report(0, playback.BufferingStageResolving)
+	src, err := track.Resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if src.Bytes == nil {
-		return nil, fmt.Errorf("track %s has no byte stream to play", trackID)
+	return prepareDarwinSourceFile(ctx, src, onBufferingProgress)
+}
+
+func prepareDarwinSourceFile(ctx context.Context, src provider.Source, onBufferingProgress func(uint8, playback.BufferingStage)) (*darwinPreparedTrack, error) {
+	report := func(percent uint8, stage playback.BufferingStage) {
+		if onBufferingProgress != nil {
+			onBufferingProgress(percent, stage)
+		}
 	}
-	report(40, player.BufferingStageDownloading)
+	if src.Bytes == nil {
+		return nil, fmt.Errorf("track %s has no byte stream to play", src.Info.ID)
+	}
+	report(40, playback.BufferingStageDownloading)
 
 	body, err := src.Bytes.OpenRange(ctx, 0)
 	if err != nil {
@@ -904,15 +945,15 @@ func prepareDarwinTrackFile(ctx context.Context, streams provider.StreamSource, 
 		_ = os.Remove(file.Name())
 		return nil, err
 	}
-	report(90, player.BufferingStagePreparing)
+	report(90, playback.BufferingStagePreparing)
 	if err := file.Close(); err != nil {
 		_ = os.Remove(file.Name())
 		return nil, err
 	}
-	report(100, player.BufferingStageReady)
+	report(100, playback.BufferingStageReady)
 
 	return &darwinPreparedTrack{
-		TrackID:  trackID,
+		TrackID:  src.Info.ID,
 		Quality:  src.Quality,
 		Info:     src.Info,
 		Format:   src.Format,
@@ -925,17 +966,17 @@ func prepareDarwinTrackFile(ctx context.Context, streams provider.StreamSource, 
 type downloadProgressWriter struct {
 	written int64
 	total   int64
-	report  func(uint8, player.BufferingStage)
+	report  func(uint8, playback.BufferingStage)
 }
 
 func (w *downloadProgressWriter) Write(p []byte) (int, error) {
 	w.written += int64(len(p))
 	if w.total <= 0 {
-		w.report(40, player.BufferingStageDownloading)
+		w.report(40, playback.BufferingStageDownloading)
 		return len(p), nil
 	}
 	percent := min(15+int((w.written*55)/w.total), 70)
-	w.report(uint8(percent), player.BufferingStageDownloading)
+	w.report(uint8(percent), playback.BufferingStageDownloading)
 	return len(p), nil
 }
 

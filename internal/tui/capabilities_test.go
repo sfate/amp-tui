@@ -20,7 +20,7 @@ func bareProvider() *plainProvider {
 }
 
 func playingModel(p provider.Provider) Model {
-	model := NewWithProviderAndRuntime(config.Default(), p, &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), p, newFakeEngine())
 	model.ready = true
 	model.width = 120
 	model.height = 40

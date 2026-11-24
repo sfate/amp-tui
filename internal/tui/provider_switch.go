@@ -78,7 +78,7 @@ func (m *Model) activateProvider(id provider.ID) tea.Cmd {
 	switch {
 	case err == nil && (m.catalog.auth == nil || strings.TrimSpace(credential) != ""):
 		m.setProvider(instance)
-		m.runtime = newPlayerRuntime(instance)
+		m.runtime = newPlayerRuntime(m.engine, instance)
 		m.ready = false
 		m.app.StatusMessage = m.loadingStatus()
 		return tea.Batch(bootstrapCmd(instance), loadingTickCmd(), m.listenMediaControlCmd())

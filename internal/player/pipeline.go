@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/provider"
 )
 
@@ -17,21 +18,12 @@ const (
 	DefaultPrebufferBytes = 512 * 1024
 )
 
-type BufferingStage string
-
-const (
-	BufferingStageResolving   BufferingStage = "Resolving..."
-	BufferingStageDownloading BufferingStage = "Downloading..."
-	BufferingStagePreparing   BufferingStage = "Preparing..."
-	BufferingStageReady       BufferingStage = "Ready"
-)
-
 type Backend interface {
-	Start(stream io.ReadSeeker, format core.AudioFormat, handler EventHandler, onFinished func(error)) (Controller, error)
+	Start(stream io.ReadSeeker, format core.AudioFormat, handler playback.EventHandler, onFinished func(error)) (Controller, error)
 }
 
 type SeekBackend interface {
-	StartAt(stream io.ReadSeeker, format core.AudioFormat, initialMS uint64, handler EventHandler, onFinished func(error)) (Controller, error)
+	StartAt(stream io.ReadSeeker, format core.AudioFormat, initialMS uint64, handler playback.EventHandler, onFinished func(error)) (Controller, error)
 }
 
 type Controller interface {
@@ -41,35 +33,31 @@ type Controller interface {
 	SetVolume(v float32)
 }
 
-type EventHandler struct {
-	OnTrackChanged      func(info core.TrackInfo, quality core.Quality, initialMS uint64)
-	OnBufferingProgress func(percent uint8, stage BufferingStage)
-	OnPlaybackProgress  func(currentMS, totalMS uint64)
-	OnAudioBands        func([]uint8)
-	OnPlaybackStopped   func()
-	OnError             func(error)
-}
-
 type PipelineOptions struct {
 	PrebufferBytes int
 	ChunkSize      int
 }
 
+// Session keeps pause, volume and stop until the backend starts, so calls during buffering apply.
 type Session struct {
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	controller Controller
+	paused     bool
+	stopped    bool
+	volume     *float32
+	cancel     context.CancelFunc
 	done       chan error
 }
 
-// StartTrackPipeline resolves trackID through streams and plays its bytes on backend.
-func StartTrackPipeline(
+var _ playback.Session = (*Session)(nil)
+
+// StartSourcePipeline plays an already resolved source on backend.
+func StartSourcePipeline(
 	ctx context.Context,
-	streams provider.StreamSource,
 	backend Backend,
-	trackID string,
-	quality core.Quality,
+	src provider.Source,
 	seekMS uint64,
-	handler EventHandler,
+	handler playback.EventHandler,
 	opts PipelineOptions,
 ) *Session {
 	if opts.PrebufferBytes <= 0 {
@@ -79,24 +67,62 @@ func StartTrackPipeline(
 		opts.ChunkSize = DefaultChunkSize
 	}
 
-	session := &Session{done: make(chan error, 1)}
+	ctx, cancel := context.WithCancel(ctx)
+	session := &Session{done: make(chan error, 1), cancel: cancel}
 	go func() {
-		session.done <- runTrackPipeline(ctx, streams, backend, session, trackID, quality, seekMS, handler, opts)
+		defer cancel()
+		session.done <- runSourcePipeline(ctx, backend, session, src, seekMS, handler, opts)
 		close(session.done)
 	}()
 	return session
 }
 
-func (s *Session) Pause()              { s.withController(func(c Controller) { c.Pause() }) }
-func (s *Session) Resume()             { s.withController(func(c Controller) { c.Resume() }) }
-func (s *Session) Stop()               { s.withController(func(c Controller) { c.Stop() }) }
-func (s *Session) SetVolume(v float32) { s.withController(func(c Controller) { c.SetVolume(v) }) }
+func (s *Session) Pause() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.paused = true
+	if s.controller != nil {
+		s.controller.Pause()
+	}
+}
+
+func (s *Session) Resume() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.paused = false
+	if s.controller != nil {
+		s.controller.Resume()
+	}
+}
+
+func (s *Session) SetVolume(v float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.volume = &v
+	if s.controller != nil {
+		s.controller.SetVolume(v)
+	}
+}
+
+func (s *Session) Stop() {
+	s.mu.Lock()
+	s.stopped = true
+	controller := s.controller
+	s.mu.Unlock()
+	if controller != nil {
+		controller.Stop()
+	}
+	s.cancel()
+}
+
+func (s *Session) Seek(uint64) error { return playback.ErrSeekUnsupported }
 
 func (s *Session) FadeOutStop(duration time.Duration) {
-	s.mu.RLock()
+	s.mu.Lock()
 	controller := s.controller
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	if controller == nil {
+		s.Stop()
 		return
 	}
 
@@ -110,7 +136,7 @@ func (s *Session) FadeOutStop(duration time.Duration) {
 		controller.SetVolume(factor)
 		time.Sleep(stepDuration)
 	}
-	controller.Stop()
+	s.Stop()
 }
 
 func (s *Session) Wait() error {
@@ -121,38 +147,34 @@ func (s *Session) Wait() error {
 	return err
 }
 
-func (s *Session) setController(c Controller) {
+// setController replays the state set during buffering; false means Stop came first.
+func (s *Session) setController(c Controller) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.controller = c
-}
-
-func (s *Session) withController(fn func(Controller)) {
-	s.mu.RLock()
-	controller := s.controller
-	s.mu.RUnlock()
-	if controller != nil {
-		fn(controller)
+	if s.stopped {
+		return false
 	}
+	s.controller = c
+	if s.volume != nil {
+		c.SetVolume(*s.volume)
+	}
+	if s.paused {
+		c.Pause()
+	}
+	return true
 }
 
-func runTrackPipeline(
+func runSourcePipeline(
 	ctx context.Context,
-	streams provider.StreamSource,
 	backend Backend,
 	session *Session,
-	trackID string,
-	quality core.Quality,
+	src provider.Source,
 	seekMS uint64,
-	handler EventHandler,
+	handler playback.EventHandler,
 	opts PipelineOptions,
 ) error {
-	src, err := streams.Resolve(ctx, trackID, quality)
-	if err != nil {
-		return reportErr(handler, err)
-	}
 	if src.Bytes == nil {
-		return reportErr(handler, fmt.Errorf("track %s has no byte stream to play", trackID))
+		return reportErr(handler, fmt.Errorf("track %s has no byte stream to play", src.Info.ID))
 	}
 
 	initialMS := seekMS
@@ -213,7 +235,9 @@ func runTrackPipeline(
 		if err != nil {
 			return err
 		}
-		session.setController(controller)
+		if !session.setController(controller) {
+			controller.Stop()
+		}
 		return nil
 	}
 
@@ -222,7 +246,7 @@ func runTrackPipeline(
 	if contentLength > 0 && int(contentLength) < prebufferTarget {
 		prebufferTarget = int(contentLength)
 	}
-	reportBufferingProgress(handler, 0, prebufferTarget, BufferingStageDownloading)
+	reportBufferingProgress(handler, 0, prebufferTarget, playback.BufferingStageDownloading)
 	pending := make([]byte, 0, opts.ChunkSize*2)
 	readBuf := make([]byte, 32*1024)
 
@@ -237,7 +261,7 @@ func runTrackPipeline(
 			pending = pending[opts.ChunkSize:]
 
 			queuedBytes += len(chunk)
-			reportBufferingProgress(handler, queuedBytes, prebufferTarget, BufferingStageDownloading)
+			reportBufferingProgress(handler, queuedBytes, prebufferTarget, playback.BufferingStageDownloading)
 			select {
 			case ch <- chunk:
 			case <-ctx.Done():
@@ -246,7 +270,7 @@ func runTrackPipeline(
 			}
 
 			if !started && queuedBytes >= prebufferTarget {
-				reportBufferingProgress(handler, prebufferTarget, prebufferTarget, BufferingStageReady)
+				reportBufferingProgress(handler, prebufferTarget, prebufferTarget, playback.BufferingStageReady)
 				if err := startBackend(); err != nil {
 					close(ch)
 					return reportErr(handler, err)
@@ -272,11 +296,11 @@ func runTrackPipeline(
 			return ctx.Err()
 		}
 		queuedBytes += len(tail)
-		reportBufferingProgress(handler, queuedBytes, prebufferTarget, BufferingStageDownloading)
+		reportBufferingProgress(handler, queuedBytes, prebufferTarget, playback.BufferingStageDownloading)
 	}
 
 	if !started {
-		reportBufferingProgress(handler, prebufferTarget, prebufferTarget, BufferingStageReady)
+		reportBufferingProgress(handler, prebufferTarget, prebufferTarget, playback.BufferingStageReady)
 		if err := startBackend(); err != nil {
 			close(ch)
 			return reportErr(handler, err)
@@ -287,6 +311,9 @@ func runTrackPipeline(
 	if started {
 		select {
 		case playErr := <-finishedCh:
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if playErr != nil {
 				return reportErr(handler, playErr)
 			}
@@ -297,7 +324,7 @@ func runTrackPipeline(
 	return nil
 }
 
-func reportBufferingProgress(handler EventHandler, current, total int, stage BufferingStage) {
+func reportBufferingProgress(handler playback.EventHandler, current, total int, stage playback.BufferingStage) {
 	if handler.OnBufferingProgress == nil || total <= 0 {
 		return
 	}
@@ -326,8 +353,9 @@ func estimateTotalDurationMS(totalBytes int64, bytesPerSecond int) uint64 {
 	return duration
 }
 
-func reportErr(handler EventHandler, err error) error {
-	if handler.OnError != nil {
+// reportErr skips context.Canceled, because only Session.Stop cancels the pipeline.
+func reportErr(handler playback.EventHandler, err error) error {
+	if handler.OnError != nil && !errors.Is(err, context.Canceled) {
 		handler.OnError(err)
 	}
 	return err

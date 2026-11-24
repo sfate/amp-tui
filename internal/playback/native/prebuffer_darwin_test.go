@@ -1,17 +1,20 @@
 //go:build darwin
 
-package tui
+package native
 
 import (
 	"context"
 	"testing"
 
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback"
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
 func TestDarwinPrebufferTakeKeepsCachedTrackReusable(t *testing.T) {
 	store := newDarwinPrebufferStore()
-	key := darwinPrebufferKey("1", testQuality320)
+	track := playback.Track{ID: "1", Quality: testQuality320}
+	key := darwinPrebufferKey(track)
 	store.current[key] = &darwinPreparedTrack{
 		TrackID: "1",
 		Quality: testQuality320,
@@ -21,7 +24,8 @@ func TestDarwinPrebufferTakeKeepsCachedTrackReusable(t *testing.T) {
 	}
 	store.order = []string{key}
 
-	prepared, err := store.TakeOrPrepare(context.Background(), nil, "1", testQuality320, nil)
+	source := provider.Source{Info: core.TrackInfo{ID: track.ID}, Quality: track.Quality}
+	prepared, err := store.TakeOrPrepareSource(context.Background(), source, nil)
 	if err != nil {
 		t.Fatalf("take cached track: %v", err)
 	}
@@ -35,7 +39,8 @@ func TestDarwinPrebufferTakeKeepsCachedTrackReusable(t *testing.T) {
 
 func TestDarwinPrebufferEmptyWindowKeepsCachedTracks(t *testing.T) {
 	store := newDarwinPrebufferStore()
-	key := darwinPrebufferKey("1", testQuality320)
+	track := playback.Track{ID: "1", Quality: testQuality320}
+	key := darwinPrebufferKey(track)
 	store.current[key] = &darwinPreparedTrack{
 		TrackID: "1",
 		Quality: testQuality320,
@@ -46,8 +51,10 @@ func TestDarwinPrebufferEmptyWindowKeepsCachedTracks(t *testing.T) {
 	}
 	store.order = []string{key}
 
-	store.Prebuffer(context.Background(), nil, nil, testQuality320, nil)
+	store.Prebuffer(context.Background(), nil, nil)
 	if _, ok := store.current[key]; !ok {
 		t.Fatal("expected cached track to survive empty prebuffer window")
 	}
 }
+
+var testQuality320 = core.Quality{ID: "Kbps320", Label: "320 kbps", Seekable: true}

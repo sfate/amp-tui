@@ -15,6 +15,7 @@ import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback/playbacktest"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/secrets"
 )
@@ -60,7 +61,7 @@ func TestProviderSwitchRebootstrapsAndClearsQueue(t *testing.T) {
 		saved = append(saved, cfg)
 		return nil
 	}
-	session := &fakePlaybackSession{}
+	session := playbacktest.NewSession()
 	art := "https://example.test/cover.jpg"
 	model.ready = true
 	model.session = session
@@ -84,7 +85,7 @@ func TestProviderSwitchRebootstrapsAndClearsQueue(t *testing.T) {
 	if model.providerID != "plain" || model.provider == nil || model.provider.ID() != "plain" {
 		t.Fatalf("active provider = %q, %v", model.providerID, model.provider)
 	}
-	if !session.stopped {
+	if !session.Stopped() {
 		t.Fatal("expected the playing session to stop")
 	}
 	if len(model.app.QueueTracks) != 0 || model.app.QueueIndex != nil || model.app.NowPlaying != nil || model.app.IsPlaying || model.currentTrackID != "" {
