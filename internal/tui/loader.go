@@ -8,6 +8,7 @@ import (
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/deezer"
 	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/sanitize"
 )
 
 type BootstrapData struct {
@@ -103,10 +104,10 @@ func mapTracks(in []deezer.Track) []app.Track {
 	for _, track := range in {
 		out = append(out, app.Track{
 			ID:        track.ID,
-			Title:     track.Title,
-			Artist:    track.Artist,
-			Album:     track.Album,
-			Year:      track.Year,
+			Title:     sanitize.Text(track.Title),
+			Artist:    sanitize.Text(track.Artist),
+			Album:     sanitize.Text(track.Album),
+			Year:      sanitize.Text(track.Year),
 			AddedAtMS: track.AddedAtMS,
 		})
 	}
@@ -118,7 +119,7 @@ func mapPlaylists(in []deezer.Playlist) []app.Playlist {
 	for _, playlist := range in {
 		out = append(out, app.Playlist{
 			ID:    playlist.ID,
-			Title: playlist.Title,
+			Title: sanitize.Text(playlist.Title),
 		})
 	}
 	return out
@@ -129,7 +130,7 @@ func mapArtists(in []deezer.Artist) []app.Artist {
 	for _, artist := range in {
 		out = append(out, app.Artist{
 			ID:   artist.ID,
-			Name: artist.Name,
+			Name: sanitize.Text(artist.Name),
 		})
 	}
 	return out

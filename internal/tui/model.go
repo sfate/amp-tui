@@ -21,6 +21,7 @@ import (
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/deezer"
 	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/sanitize"
 )
 
 var activePalette = colorscheme.Lookup(colorscheme.Aetheria).Palette
@@ -498,8 +499,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.app.NowPlaying = &app.NowPlaying{
 			ID:          msg.meta.ID,
-			Title:       msg.meta.Title,
-			Artist:      msg.meta.Artist,
+			Title:       sanitize.Text(msg.meta.Title),
+			Artist:      sanitize.Text(msg.meta.Artist),
 			Quality:     configQualityFromDeezer(msg.quality),
 			CurrentMS:   msg.initialMS,
 			TotalMS:     totalMS,
