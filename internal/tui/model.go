@@ -18,6 +18,7 @@ import (
 type Model struct {
 	app             *app.App
 	provider        provider.Provider
+	caps            provider.Capabilities
 	factory         provider.Factory
 	catalog         catalogInfo
 	saveConfig      func(config.Config) error
@@ -128,9 +129,8 @@ func normalizeConfig(cfg config.Config) config.Config {
 }
 
 func newModel(state *app.App, p provider.Provider, factory provider.Factory) Model {
-	return Model{
+	model := Model{
 		app:            state,
-		provider:       p,
 		runtime:        newPlayerRuntime(p),
 		playbackEvents: make(chan tea.Msg, 32),
 		factory:        factory,
@@ -140,6 +140,8 @@ func newModel(state *app.App, p provider.Provider, factory provider.Factory) Mod
 		perf:           perfState{logPath: perfLogPathFromEnv(), msgCounts: map[string]int{}},
 		ready:          p == nil,
 	}
+	model.setProvider(p)
+	return model
 }
 
 func (m Model) Init() tea.Cmd {

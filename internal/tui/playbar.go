@@ -22,11 +22,7 @@ func (m Model) renderCompactStatusColumn(width, height int) string {
 }
 
 func (m Model) renderPlaybar() string {
-	controls := " space play/pause | n/p next prev | ,/. seek | u/i quality | r repeat | +/- volume "
-	if m.viewingFavorites() {
-		controls = " space play/pause | n/p next prev | ,/. seek | u/i quality | r repeat | s sort | +/- volume "
-	}
-	left := paint(controls, activePalette.Text, "")
+	left := paint(m.controlsHint(), activePalette.Text, "")
 	stateColor := activePalette.TextMuted
 	if m.app.IsPlaying {
 		stateColor = activePalette.Orange

@@ -17,7 +17,7 @@ type loginState struct {
 func (m *Model) onLoginSucceeded(msg loginSucceededMsg) tea.Cmd {
 	m.bootstrapFailed = false
 	m.app.Config = msg.cfg
-	m.provider = msg.provider
+	m.setProvider(msg.provider)
 	m.setCatalog(catalogInfoOf(msg.provider))
 	m.runtime = newPlayerRuntime(msg.provider)
 	m.login.active = false

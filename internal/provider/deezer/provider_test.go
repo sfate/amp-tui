@@ -97,3 +97,14 @@ func TestAuthenticatorNormalizesAndMasksSecrets(t *testing.T) {
 		t.Fatalf("unexpected confirm text %q", p.LoginPrompt().ConfirmText)
 	}
 }
+
+func TestDeezerHasEveryCapability(t *testing.T) {
+	p, err := New(config.Default())
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	want := provider.Capabilities{Playback: true, QualityLadder: true, Login: true, Radio: true, Favorites: true}
+	if got := provider.CapabilitiesOf(p); got != want {
+		t.Fatalf("CapabilitiesOf(deezer) = %+v, want %+v", got, want)
+	}
+}

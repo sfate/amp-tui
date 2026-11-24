@@ -8,34 +8,63 @@ import (
 	"github.com/sfate/amp-tui/internal/core"
 )
 
+type settingsRowID string
+
+const (
+	settingTheme       settingsRowID = "theme"
+	settingVolume      settingsRowID = "volume"
+	settingQuality     settingsRowID = "quality"
+	settingCrossfade   settingsRowID = "crossfade"
+	settingDuration    settingsRowID = "duration"
+	settingDisplay     settingsRowID = "display"
+	settingCompactView settingsRowID = "compact view"
+)
+
+func (m Model) settingsRows() []settingsRowID {
+	rows := []settingsRowID{settingTheme, settingVolume}
+	if m.caps.QualityLadder {
+		rows = append(rows, settingQuality)
+	}
+	return append(rows, settingCrossfade, settingDuration, settingDisplay, settingCompactView)
+}
+
+func (m Model) selectedSettingRow() settingsRowID {
+	rows := m.settingsRows()
+	idx := derefOrZero(m.app.SettingsState.Selected())
+	if idx < 0 || idx >= len(rows) {
+		return ""
+	}
+	return rows[idx]
+}
+
 func (m *Model) adjustSelectedSetting(direction int) {
-	switch derefOrZero(m.app.SettingsState.Selected()) {
-	case 0:
+	switch m.selectedSettingRow() {
+	case settingTheme:
 		m.app.Config.Theme = colorscheme.Next(m.app.Config.Theme, direction)
 		applyTheme(m.app.Config.Theme)
 		m.app.StatusMessage = fmt.Sprintf("Theme: %s", colorscheme.Label(m.app.Config.Theme))
 		m.persistConfig()
-	case 1:
+	case settingVolume:
 		m.adjustVolume(direction * 5)
-	case 2:
+	case settingQuality:
 		next := m.stepQuality(m.configuredQuality(), direction, true)
 		m.app.Config.DefaultQuality = next.ID
 		m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(next))
 		m.persistConfig()
-	case 3:
+	case settingCrossfade:
 		m.app.Config.CrossfadeEnabled = !m.app.Config.CrossfadeEnabled
 		m.app.StatusMessage = fmt.Sprintf("Crossfade: %s", onOff(m.app.Config.CrossfadeEnabled))
 		m.persistConfig()
-	case 4:
+	case settingDuration:
 		m.app.Config.CrossfadeDurationMS = nextCrossfadeDuration(m.app.Config.CrossfadeDurationMS, direction)
 		m.app.StatusMessage = fmt.Sprintf("Crossfade duration: %dms", m.app.Config.CrossfadeDurationMS)
 		m.persistConfig()
-	case 5:
+	case settingDisplay:
 		m.app.Config.DisplayMode = nextDisplayMode(m.app.Config.DisplayMode, direction)
 		m.app.Config.DisplayEnabled = m.app.Config.DisplayMode != config.DisplayModeOff
 		m.app.StatusMessage = fmt.Sprintf("Display: %s", displayModeLabel(m.app.Config.DisplayMode))
 		m.persistConfig()
-	case 6:
+	case settingCompactView:
 		m.app.Config.CompactView = !m.app.Config.CompactView
 		m.app.StatusMessage = fmt.Sprintf("Compact view: %s", onOff(m.app.Config.CompactView))
 		m.persistConfig()
@@ -134,26 +163,34 @@ func onOff(v bool) string {
 
 func (m Model) renderSettingsRows() []string {
 	selected := derefOrZero(m.app.SettingsState.Selected())
-	rows := []struct {
-		label string
-		value string
-		color string
-	}{
-		{label: "Theme", value: colorscheme.Label(m.app.Config.Theme), color: activePalette.Blue},
-		{label: "Volume", value: fmt.Sprintf("%d%%", m.app.Volume), color: activePalette.Aqua},
-		{label: "Quality", value: qualityLabel(m.configuredQuality()), color: activePalette.Purple},
-		{label: "Crossfade", value: onOff(m.app.Config.CrossfadeEnabled), color: activePalette.Orange},
-		{label: "Duration", value: fmt.Sprintf("%dms", m.app.Config.CrossfadeDurationMS), color: activePalette.Yellow},
-		{label: "Display", value: displayModeLabel(m.app.Config.DisplayMode), color: activePalette.Aqua},
-		{label: "Compact View", value: onOff(m.app.Config.CompactView), color: activePalette.Green},
-	}
+	rows := m.settingsRows()
 	lines := make([]string, 0, len(rows))
-	for i, row := range rows {
-		line := kvLine(row.label, row.value, row.color)
+	for i, id := range rows {
+		label, value, color := m.settingsRowView(id)
+		line := kvLine(label, value, color)
 		if i == selected {
-			line = trackRow(line, true, row.color)
+			line = trackRow(line, true, color)
 		}
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+func (m Model) settingsRowView(id settingsRowID) (label, value, color string) {
+	switch id {
+	case settingTheme:
+		return "Theme", colorscheme.Label(m.app.Config.Theme), activePalette.Blue
+	case settingVolume:
+		return "Volume", fmt.Sprintf("%d%%", m.app.Volume), activePalette.Aqua
+	case settingQuality:
+		return "Quality", qualityLabel(m.configuredQuality()), activePalette.Purple
+	case settingCrossfade:
+		return "Crossfade", onOff(m.app.Config.CrossfadeEnabled), activePalette.Orange
+	case settingDuration:
+		return "Duration", fmt.Sprintf("%dms", m.app.Config.CrossfadeDurationMS), activePalette.Yellow
+	case settingDisplay:
+		return "Display", displayModeLabel(m.app.Config.DisplayMode), activePalette.Aqua
+	default:
+		return "Compact View", onOff(m.app.Config.CompactView), activePalette.Green
+	}
 }
