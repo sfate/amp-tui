@@ -221,14 +221,15 @@ func (m Model) qualityLadder() []core.Quality {
 	return streams.Qualities()
 }
 
-// configuredQuality maps the config ID onto the provider ladder; an unknown ID gives the provider default.
+// configuredQuality maps the provider settings ID onto the ladder; an unknown ID gives the provider default.
 func (m Model) configuredQuality() core.Quality {
+	id := m.app.Config.ProviderSettings(string(m.providerID)).DefaultQuality
 	streams, ok := m.provider.(provider.StreamSource)
 	if !ok {
-		return core.Quality{ID: m.app.Config.DefaultQuality}
+		return core.Quality{ID: id}
 	}
 	ladder := streams.Qualities()
-	if idx := qualityIndex(ladder, m.app.Config.DefaultQuality); idx >= 0 {
+	if idx := qualityIndex(ladder, id); idx >= 0 {
 		return ladder[idx]
 	}
 	return streams.DefaultQuality()

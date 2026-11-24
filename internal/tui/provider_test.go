@@ -180,7 +180,7 @@ func TestQualityUpStopsAtTopOfProviderLadder(t *testing.T) {
 
 func TestConfiguredQualityOutsideLadderUsesProviderDefault(t *testing.T) {
 	cfg := config.Default()
-	cfg.DefaultQuality = "Flac"
+	cfg.SetProviderSettings("fake", config.ProviderSettings{DefaultQuality: "Flac"})
 	runtime := &fakePlaybackRuntime{}
 	model := NewWithProviderAndRuntime(cfg, twoStepProvider(), runtime)
 

@@ -50,6 +50,9 @@ func (m *Model) onCollectionLoaded(msg collectionLoadedMsg) tea.Cmd {
 		trackID := m.app.LoadFlowTracks(msg.tracks, msg.autoplay)
 		m.ready = true
 		m.app.StatusMessage = fmt.Sprintf("Loaded %s (%d tracks)", msg.title, len(msg.tracks))
+		if m.isInitialSection(msg.id) {
+			m.showNotice()
+		}
 		if trackID != nil {
 			_ = m.prebufferQueueWindowFrom(1)
 			return m.startTrackPlayback(*trackID)
@@ -61,6 +64,7 @@ func (m *Model) onCollectionLoaded(msg collectionLoadedMsg) tea.Cmd {
 	m.ready = true
 	if m.isInitialSection(msg.id) {
 		m.app.ActivePanel = app.ActivePanelNavigation
+		m.showNotice()
 	}
 	return m.prebufferTrackWindowFrom(msg.tracks, 0)
 }
@@ -238,4 +242,12 @@ func (m Model) renderMain(width, height int) string {
 	}
 
 	return m.renderPanel(title, strings.Join(lines, "\n"), m.app.ActivePanel == app.ActivePanelMain || m.app.ActivePanel == app.ActivePanelSearch, width, height)
+}
+
+// showNotice repeats the one-time notice after loading statuses replaced it.
+func (m *Model) showNotice() {
+	if m.notice != "" {
+		m.app.StatusMessage = m.notice
+		m.notice = ""
+	}
 }

@@ -101,23 +101,29 @@ If a supported Chromium browser is not available, press `P` from the login confi
 - a Deezer `arl` value
 - a copied browser `Cookie` header containing `arl=...`
 
-After validation succeeds, the app stores the ARL in the config file and loads your Deezer library. The token is masked in the UI while you type or paste it.
+After validation succeeds, the app stores the ARL in the OS keychain and loads your Deezer library. The token is masked in the UI while you type or paste it.
 
 ## Configuration
 
 The app reads:
 
 ```bash
-~/.deezer-tui-config.json
+$XDG_CONFIG_HOME/amp-tui/config.json   # or ~/.config/amp-tui/config.json, also on macOS
 ```
 
-The app creates and updates this file after a successful login, and fills defaults for missing settings. You can still edit it manually if you need to move an existing session between machines:
+The app creates and updates this file (mode 0600) after a successful login, and fills defaults for missing settings. Per-provider settings such as the default quality live under `providers`:
 
 ```json
 {
-  "arl": "your_deezer_arl"
+  "schema_version": 2,
+  "provider": "deezer",
+  "providers": { "deezer": { "default_quality": "Kbps320" } }
 }
 ```
+
+Login secrets are not in this file. The app keeps them in the OS keychain (macOS Keychain, Secret Service on Linux, Credential Manager on Windows) under the service `amp-tui`. If no keychain is available, it uses `secrets.json` (mode 0600) next to `config.json`; `amp-tui --doctor` shows which one applies.
+
+On first start, the app migrates an old `~/.deezer-tui-config.json`: it copies the settings and the ARL into the new locations and leaves the old file as it is. Delete the old file after the migration, because it still holds the ARL in plain text.
 
 ## Colors
 

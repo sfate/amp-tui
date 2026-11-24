@@ -2,7 +2,6 @@ package tui
 
 import (
 	"github.com/sfate/amp-tui/internal/app"
-	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
@@ -103,7 +102,7 @@ type scheduledPlaybackMsg struct {
 }
 
 type loginSucceededMsg struct {
-	cfg      config.Config
+	secret   string
 	provider provider.Provider
 }
 

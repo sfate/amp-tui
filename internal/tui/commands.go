@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/provider"
 )
 
@@ -24,25 +23,25 @@ func bootstrapCmd(p provider.Provider) tea.Cmd {
 	}
 }
 
-func validateLoginCmd(cfg config.Config, factory provider.Factory) tea.Cmd {
+func validateLoginCmd(cfg provider.Config, factory provider.Factory) tea.Cmd {
 	return func() tea.Msg {
 		return signIn(cfg, factory)
 	}
 }
 
-func browserLoginCmd(cfg config.Config, authn provider.Authenticator, factory provider.Factory) tea.Cmd {
+func browserLoginCmd(cfg provider.Config, authn provider.Authenticator, factory provider.Factory) tea.Cmd {
 	return func() tea.Msg {
 		secret, err := authn.BrowserLogin(context.Background())
 		if err != nil {
 			return loginFailedMsg{message: fmt.Sprintf("Browser login failed: %v", err)}
 		}
-		cfg.ARL = secret
+		cfg.Credential = secret
 		return signIn(cfg, factory)
 	}
 }
 
-// signIn builds a provider from cfg and proves the secret with a bootstrap call.
-func signIn(cfg config.Config, factory provider.Factory) tea.Msg {
+// signIn builds a provider from cfg and proves the credential with a bootstrap call.
+func signIn(cfg provider.Config, factory provider.Factory) tea.Msg {
 	if factory == nil {
 		return loginFailedMsg{message: "Login error: no music provider configured"}
 	}
@@ -53,7 +52,7 @@ func signIn(cfg config.Config, factory provider.Factory) tea.Msg {
 	if _, err := p.Bootstrap(context.Background()); err != nil {
 		return loginFailedMsg{message: fmt.Sprintf("Login validation failed: %v", err)}
 	}
-	return loginSucceededMsg{cfg: cfg, provider: p}
+	return loginSucceededMsg{secret: cfg.Credential, provider: p}
 }
 
 func listenMediaControlCmd(events <-chan MediaControlCommand) tea.Cmd {

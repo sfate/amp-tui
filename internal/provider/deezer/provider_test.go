@@ -5,12 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/provider"
 )
 
 func TestProviderSectionsAndCapabilities(t *testing.T) {
-	p, err := New(config.Default())
+	p, err := New(provider.Config{})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -42,7 +41,7 @@ func TestProviderSectionsAndCapabilities(t *testing.T) {
 }
 
 func TestSignedOutProviderRejectsCatalogCalls(t *testing.T) {
-	p, err := New(config.Default())
+	p, err := New(provider.Config{})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -55,7 +54,7 @@ func TestSignedOutProviderRejectsCatalogCalls(t *testing.T) {
 }
 
 func TestLoadSectionRejectsUnknownSection(t *testing.T) {
-	p, err := New(config.Config{ARL: "token"})
+	p, err := New(provider.Config{Credential: "token"})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}
@@ -82,7 +81,7 @@ func TestRegisterAddsDeezerFactory(t *testing.T) {
 }
 
 func TestAuthenticatorNormalizesAndMasksSecrets(t *testing.T) {
-	p, _ := New(config.Default())
+	p, _ := New(provider.Config{})
 	got, err := p.NormalizeSecret("Cookie: sid=session; arl=token-value")
 	if err != nil || got != "token-value" {
 		t.Fatalf("normalize = %q, %v", got, err)
@@ -99,7 +98,7 @@ func TestAuthenticatorNormalizesAndMasksSecrets(t *testing.T) {
 }
 
 func TestDeezerHasEveryCapability(t *testing.T) {
-	p, err := New(config.Default())
+	p, err := New(provider.Config{})
 	if err != nil {
 		t.Fatalf("new provider: %v", err)
 	}

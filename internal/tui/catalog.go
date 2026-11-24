@@ -105,6 +105,7 @@ func (m Model) loadingStatus() string {
 func (m *Model) loadInitialSection() tea.Cmd {
 	if len(m.catalog.sections) == 0 {
 		m.ready = true
+		m.showNotice()
 		return nil
 	}
 	return loadSectionCmd(m.provider, m.catalog.sections[0], false)

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,16 +13,19 @@ import (
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/secrets"
 )
 
 // Model is the Bubble Tea root model; each concern keeps its state and handlers in its own file.
 type Model struct {
 	app             *app.App
 	provider        provider.Provider
+	providerID      provider.ID
 	caps            provider.Capabilities
 	factory         provider.Factory
 	catalog         catalogInfo
 	saveConfig      func(config.Config) error
+	secrets         secrets.Store
 	configLoadErr   error
 	bootstrapFailed bool
 	ready           bool
@@ -30,6 +34,8 @@ type Model struct {
 	height          int
 
 	favoritesSortAsc bool
+	// notice is a one-time message shown again when the first section loads.
+	notice string
 
 	runtime         PlayerRuntime
 	session         PlaybackSession
@@ -51,39 +57,65 @@ type Model struct {
 	perf       perfState
 }
 
+const migratedNotice = "Migrated settings from ~/" + config.LegacyFileName + "; you can delete it"
+
+// New migrates a legacy config once, then loads the config file and the active provider's credential.
 func New(opts ...Option) Model {
+	o := applyOptions(opts)
+	migrated, migrateErr := config.MigrateLegacy(o.secrets)
 	cfg, err := config.Load()
-	model := NewWithConfig(cfg, opts...)
-	if err != nil {
-		model.configLoadErr = err
+	if migrateErr != nil {
+		err = migrateErr
+	}
+	model := newWithConfig(cfg, err, o)
+	switch {
+	case err != nil:
 		model.app.StatusMessage = fmt.Sprintf("Config error, settings will not be saved: %v", err)
+	case migrated:
+		model.notice = migratedNotice
+		model.app.StatusMessage = migratedNotice
 	}
 	return model
 }
 
-// NewWithConfig signs in to the default registry provider when cfg holds a secret.
+// NewWithConfig signs in to the configured provider when the secrets store holds its credential.
 func NewWithConfig(cfg config.Config, opts ...Option) Model {
+	return newWithConfig(cfg, nil, applyOptions(opts))
+}
+
+func newWithConfig(cfg config.Config, loadErr error, o options) Model {
 	cfg = normalizeConfig(cfg)
-	o := applyOptions(opts)
-	id := o.registry.Default()
+	id := provider.ID(cfg.Provider)
+	if _, ok := o.registry.Lookup(id); !ok {
+		id = o.registry.Default()
+	}
 	factory, _ := o.registry.Lookup(id)
 	info := catalogInfo{name: o.registry.Name(id)}
 
+	var credential string
+	var credErr error
 	var session provider.Provider
 	var factoryErr error
 	if factory != nil {
-		instance, err := factory(cfg)
+		credential, credErr = o.secrets.Get(string(id), secrets.CredentialKey)
+		if errors.Is(credErr, secrets.ErrNotFound) {
+			credErr = nil
+		}
+		instance, err := factory(newProviderConfig(cfg, id, credential, o.secrets, loadErr))
 		if err != nil {
 			factoryErr = err
 		} else {
 			info = catalogInfoOf(instance)
-			if strings.TrimSpace(cfg.ARL) != "" {
+			if strings.TrimSpace(credential) != "" {
 				session = instance
 			}
 		}
 	}
 
 	model := newModel(app.New(cfg), session, factory)
+	model.providerID = id
+	model.secrets = o.secrets
+	model.configLoadErr = loadErr
 	model.setCatalog(info)
 	loginActive := session == nil
 	switch {
@@ -91,6 +123,8 @@ func NewWithConfig(cfg config.Config, opts ...Option) Model {
 		model.app.StatusMessage = "No music provider configured"
 	case factoryErr != nil:
 		model.app.StatusMessage = fmt.Sprintf("Login required: %v", factoryErr)
+	case credErr != nil:
+		model.app.StatusMessage = fmt.Sprintf("Login required: could not read the saved login: %v", credErr)
 	case loginActive && info.auth != nil:
 		model.app.StatusMessage = "Login required: paste " + info.auth.LoginPrompt().SecretName
 	case loginActive:
@@ -105,6 +139,9 @@ func NewWithConfig(cfg config.Config, opts ...Option) Model {
 
 func NewWithProvider(cfg config.Config, p provider.Provider) Model {
 	model := newModel(app.New(normalizeConfig(cfg)), p, nil)
+	if p != nil {
+		model.providerID = p.ID()
+	}
 	model.setCatalog(catalogInfoOf(p))
 	model.app.StatusMessage = model.loadingStatus()
 	if p == nil {
@@ -135,6 +172,7 @@ func newModel(state *app.App, p provider.Provider, factory provider.Factory) Mod
 		playbackEvents: make(chan tea.Msg, 32),
 		factory:        factory,
 		saveConfig:     config.Save,
+		secrets:        secrets.NewMemory(),
 		artwork:        artworkState{cache: map[string]string{}, cacheOrder: []string{}},
 		prebuffer:      prebufferState{statuses: map[string]PrebufferStatus{}, ready: []string{}},
 		perf:           perfState{logPath: perfLogPathFromEnv(), msgCounts: map[string]int{}},
