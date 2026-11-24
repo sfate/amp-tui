@@ -113,7 +113,7 @@ After validation succeeds, the app stores the ARL in the OS keychain and loads y
 
 Open `Settings` from the Browse list. The rows are:
 
-- `Provider`: `Left`/`Right`/`Enter` switches to the next registered provider. A switch stops playback, clears the queue and search results, saves the choice, and loads the new library. If the provider needs a login and has none, the login screen opens.
+- `Provider`: `Left`/`Right` switches to the next registered provider (`Enter` does not, so a stray key press cannot stop playback). A switch stops playback, clears the queue and search results, saves the choice, and loads the new library. If the provider needs a login and has none, the login screen opens.
 - `Account`: shows `Signed in` or `Not signed in`. `Enter` signs out (deletes the saved login and opens the login screen) or signs in. Providers without a login do not show this row.
 - Theme, Volume, Crossfade, Duration, Display, Compact View: global settings.
 - Settings of the active provider, such as `Quality`.

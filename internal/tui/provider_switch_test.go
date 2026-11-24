@@ -303,3 +303,21 @@ func TestLateLoadFromReplacedProviderIsDropped(t *testing.T) {
 		t.Fatalf("expected late deezer results to be dropped, got %v %v", model.app.Playlists, model.app.CurrentTracks)
 	}
 }
+
+func TestEnterOnProviderRowDoesNotSwitch(t *testing.T) {
+	isolateConfig(t)
+	model := NewWithConfig(config.Default(), WithRegistry(switchRegistry()), WithSecrets(signedInStore(t)))
+	model.saveConfig = func(config.Config) error { return nil }
+	model.ready = true
+	selectSettingsRow(t, &model, settingProvider)
+
+	next, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = next.(Model)
+
+	if model.providerID != "deezer" {
+		t.Fatalf("Enter switched provider to %q; only left/right may switch", model.providerID)
+	}
+	if !strings.Contains(model.app.StatusMessage, "←/→") {
+		t.Fatalf("status %q, want a hint to use left/right", model.app.StatusMessage)
+	}
+}

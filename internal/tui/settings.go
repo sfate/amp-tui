@@ -48,6 +48,11 @@ func (m *Model) syncSettingsRows() {
 
 // enterSelectedSetting toggles the session on the Account row; other rows step forward.
 func (m *Model) enterSelectedSetting() tea.Cmd {
+	// A switch stops playback, and Settings opens on this row, so Enter must not switch.
+	if m.selectedSettingRow() == settingProvider {
+		m.app.StatusMessage = "Use ←/→ to change provider"
+		return nil
+	}
 	if m.selectedSettingRow() != settingAccount {
 		return m.adjustSelectedSetting(1)
 	}
