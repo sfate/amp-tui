@@ -1,4 +1,4 @@
-module github.com/sfate/deezer-tui
+module github.com/sfate/amp-tui
 
 go 1.27.3
 

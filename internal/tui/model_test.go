@@ -14,11 +14,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/sfate/deezer-tui/internal/app"
-	"github.com/sfate/deezer-tui/internal/colorscheme"
-	"github.com/sfate/deezer-tui/internal/config"
-	"github.com/sfate/deezer-tui/internal/deezer"
-	"github.com/sfate/deezer-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/app"
+	"github.com/sfate/amp-tui/internal/colorscheme"
+	"github.com/sfate/amp-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/player"
 )
 
 type fakeLoader struct {
@@ -167,7 +167,7 @@ func TestViewUsesAltScreen(t *testing.T) {
 	if !view.AltScreen {
 		t.Fatal("expected alt screen to be enabled")
 	}
-	if view.WindowTitle != "deezer-tui" {
+	if view.WindowTitle != "amp-tui" {
 		t.Fatalf("unexpected window title %q", view.WindowTitle)
 	}
 }
@@ -190,7 +190,7 @@ func TestViewShowsLoginScreenWhenARLMissing(t *testing.T) {
 	model.height = 40
 
 	view := model.View()
-	if view.WindowTitle != "deezer-tui login" {
+	if view.WindowTitle != "amp-tui login" {
 		t.Fatalf("unexpected login window title %q", view.WindowTitle)
 	}
 	if !strings.Contains(view.Content, "Sign in with Deezer") {

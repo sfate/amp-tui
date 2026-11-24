@@ -1,13 +1,13 @@
 .PHONY: lint audit test build dev-build ci
 
-BINARY_NAME ?= deezer-tui
+BINARY_NAME ?= amp-tui
 BUILD_OUTPUT ?= bin/$(BINARY_NAME)
 DEV_BUILD_OUTPUT ?= $(HOME)/.local/bin/$(BINARY_NAME)
 TEST_DIR ?= ./...
 TEST_CASE ?= ^.+$
 UNAME_S := $(shell uname -s)
 MAC_HELPER_SRC := internal/tui/mac_player_helper.swift
-MAC_HELPER_CACHE_DIR ?= $(HOME)/Library/Caches/deezer-tui
+MAC_HELPER_CACHE_DIR ?= $(HOME)/Library/Caches/amp-tui
 MAC_HELPER_SWIFT := $(MAC_HELPER_CACHE_DIR)/mac_player_helper.swift
 MAC_HELPER_BIN := $(MAC_HELPER_CACHE_DIR)/mac-player-helper
 MAC_HELPER_SUM := $(MAC_HELPER_CACHE_DIR)/mac-player-helper.sha256
@@ -29,7 +29,7 @@ ifeq ($(UNAME_S),Darwin)
 	xcrun swiftc -O -o $(MAC_HELPER_BIN) $(MAC_HELPER_SWIFT)
 	printf "%s" "$$(shasum -a 256 $(MAC_HELPER_SRC) | awk '{print $$1}')" > $(MAC_HELPER_SUM)
 endif
-	go build -mod=readonly -o $(BUILD_OUTPUT) ./cmd/deezer-tui
+	go build -mod=readonly -o $(BUILD_OUTPUT) ./cmd/amp-tui
 
 dev-build: build
 	mkdir -p "$(dir $(DEV_BUILD_OUTPUT))"

@@ -93,7 +93,7 @@ func TestFetchAPITokenRejectsUnauthenticatedUser(t *testing.T) {
 }
 
 func TestFetchAPITokenUsesCustomUserAgent(t *testing.T) {
-	const userAgent = "deezer-tui-test-agent"
+	const userAgent = "amp-tui-test-agent"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("User-Agent"); got != userAgent {
 			t.Fatalf("expected custom user agent %q, got %q", userAgent, got)

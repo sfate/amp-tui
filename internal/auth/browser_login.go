@@ -36,7 +36,7 @@ func BrowserLogin(ctx context.Context, opts BrowserLoginOptions) (string, error)
 	if err != nil {
 		return "", err
 	}
-	profileDir, err := os.MkdirTemp("", "deezer-tui-login-*")
+	profileDir, err := os.MkdirTemp("", "amp-tui-login-*")
 	if err != nil {
 		return "", fmt.Errorf("create browser profile: %w", err)
 	}

@@ -5,8 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/sfate/deezer-tui/internal/deezer"
-	"github.com/sfate/deezer-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/player"
 )
 
 type PlaybackSession interface {

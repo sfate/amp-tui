@@ -9,7 +9,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/sfate/deezer-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/deezer"
 )
 
 type ProcessBackend struct{}
@@ -19,7 +19,7 @@ func NewProcessBackend() *ProcessBackend {
 }
 
 func (b *ProcessBackend) Start(stream io.ReadSeeker, quality deezer.AudioQuality, _ EventHandler, onFinished func(error)) (Controller, error) {
-	file, err := os.CreateTemp("", "deezer-tui-*"+qualityExtension(quality))
+	file, err := os.CreateTemp("", "amp-tui-*"+qualityExtension(quality))
 	if err != nil {
 		return nil, fmt.Errorf("create temp audio file: %w", err)
 	}
