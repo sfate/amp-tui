@@ -969,10 +969,10 @@ func (c *Client) writeDebugDump(fileName, raw string) {
 		return
 	}
 	base := filepath.Join(homeDir, ".amp-tui-debug")
-	if err := os.MkdirAll(base, 0o755); err != nil {
+	if err := os.MkdirAll(base, 0o700); err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(base, fileName), []byte(raw), 0o644)
+	_ = os.WriteFile(filepath.Join(base, fileName), []byte(raw), 0o600)
 }
 
 func sanitizeDebugFilePart(value string) string {

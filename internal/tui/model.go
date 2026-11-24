@@ -830,7 +830,7 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) shouldUseCompactView(normalQueueHeight int) bool {
-	if !m.app.Config.CompactView || len(m.app.Queue) == 0 {
+	if !m.app.Config.CompactView || len(m.app.QueueTracks) == 0 {
 		return false
 	}
 	return normalQueueVisibleTrackRows(normalQueueHeight) < 3
@@ -1004,7 +1004,6 @@ func (m *Model) handleSpacebar() tea.Cmd {
 				}
 			}
 			m.app.QueueTracks = []app.Track{*track}
-			m.app.Queue = formatQueue(m.app.QueueTracks)
 			m.app.QueueIndex = intPtr(0)
 			m.app.QueueState.Select(intPtr(0))
 			m.app.IsPlaying = true
@@ -1081,7 +1080,6 @@ func (m *Model) handleEnter() tea.Cmd {
 		selected := derefOrZero(m.app.MainState.Selected())
 		if selected == 0 {
 			m.app.QueueTracks = append([]app.Track(nil), m.app.CurrentTracks...)
-			m.app.Queue = formatQueue(m.app.QueueTracks)
 			m.app.QueueIndex = intPtr(0)
 			m.app.QueueState.Select(intPtr(0))
 			m.app.IsPlaying = true
@@ -1100,7 +1098,6 @@ func (m *Model) handleEnter() tea.Cmd {
 				return m.startTrackPlayback(track.ID)
 			}
 			m.app.QueueTracks = []app.Track{track}
-			m.app.Queue = formatQueue(m.app.QueueTracks)
 			m.app.QueueIndex = intPtr(0)
 			m.app.QueueState.Select(intPtr(0))
 			m.app.IsPlaying = true
@@ -1191,7 +1188,6 @@ func (m *Model) playSearchTrack(selected int) tea.Cmd {
 	}
 	track := m.app.CurrentTracks[selected]
 	m.app.QueueTracks = append([]app.Track(nil), m.app.CurrentTracks...)
-	m.app.Queue = formatQueue(m.app.QueueTracks)
 	m.app.QueueIndex = intPtr(selected)
 	m.app.QueueState.Select(intPtr(selected))
 	m.app.IsPlaying = true
@@ -1232,7 +1228,6 @@ func (m *Model) applyFavoritesSort() {
 	})
 	if queueOwned {
 		m.app.QueueTracks = append([]app.Track(nil), m.app.CurrentTracks...)
-		m.app.Queue = formatQueue(m.app.QueueTracks)
 	}
 }
 
@@ -2156,7 +2151,7 @@ func (m *Model) handlePlaybackFinished() tea.Cmd {
 
 func (m Model) renderSidebar(width, height int) string {
 	nav := []string{sectionHeading("Browse", activePalette.Blue)}
-	items := []string{"Home", "Flow", "Explore", "Favorites", "Settings"}
+	items := app.NavItems
 	selectedNav := derefOrZero(m.app.NavState.Selected())
 	for i, item := range items {
 		selected := i == selectedNav && m.app.ActivePanel == app.ActivePanelNavigation
@@ -2253,7 +2248,7 @@ func (m Model) renderMain(width, height int) string {
 		lines = append(lines, tableHeader(" #  Title                               Artist", activePalette.Orange))
 		lines = append(lines, separatorLine(58, activePalette.Border))
 		visibleRows := max(0, height-2-len(lines))
-		selectedTrack := max0(selected - 1)
+		selectedTrack := max(0, selected-1)
 		start := 0
 		if selected > 0 {
 			start = scrollStart(selectedTrack, len(m.app.CurrentTracks), visibleRows, 0)
@@ -2305,11 +2300,11 @@ func (m Model) renderQueue(width, height int) string {
 		kvLine("Flow", fmt.Sprintf("%t", m.app.IsFlowQueue), activePalette.Purple),
 	}
 
-	if len(m.app.Queue) == 0 {
+	if len(m.app.QueueTracks) == 0 {
 		lines = append(lines, "", paint(" Nothing queued", activePalette.TextMuted, ""))
 	}
 
-	if len(m.app.Queue) > 0 {
+	if len(m.app.QueueTracks) > 0 {
 		lines = append(lines, "", sectionHeading("Queue", activePalette.Orange))
 		lines = append(lines, separatorLine(contentWidth, activePalette.Border))
 		visibleRows := max(0, height-2-len(lines))
@@ -2321,10 +2316,10 @@ func (m Model) renderQueue(width, height int) string {
 		} else if m.app.QueueIndex != nil {
 			target = *m.app.QueueIndex
 		}
-		start := scrollStart(target, len(m.app.Queue), visibleRows, following)
-		end := min(len(m.app.Queue), start+visibleRows)
+		start := scrollStart(target, len(m.app.QueueTracks), visibleRows, following)
+		end := min(len(m.app.QueueTracks), start+visibleRows)
 		for i := start; i < end; i++ {
-			item := m.app.Queue[i]
+			item := m.app.QueueTracks[i].QueueLabel()
 			indicator := m.queuePrebufferIndicator(i)
 			prefix := fmt.Sprintf(" %02d ", i+1)
 			itemWidth := max(1, queueRowTextWidth-textWidth(prefix)-queueIndicatorWidth)
@@ -2960,10 +2955,6 @@ func derefOrZero(v *int) int {
 	return *v
 }
 
-func max0(v int) int {
-	return max(v, 0)
-}
-
 func scrollStart(index, total, visible, following int) int {
 	if total <= 0 || visible <= 0 || visible >= total || index < 0 {
 		return 0
@@ -3005,14 +2996,6 @@ func joinColumns(columns ...string) string {
 		rows = append(rows, strings.Join(parts, "  "))
 	}
 	return strings.Join(rows, "\n")
-}
-
-func formatQueue(tracks []app.Track) []string {
-	queue := make([]string, 0, len(tracks))
-	for _, track := range tracks {
-		queue = append(queue, track.Title+" - "+track.Artist)
-	}
-	return queue
 }
 
 type searchTrackColumnWidths struct {

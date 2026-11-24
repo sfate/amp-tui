@@ -42,11 +42,11 @@ func (s *StreamBuffer) Read(out []byte) (int, error) {
 func (s *StreamBuffer) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	case io.SeekStart:
-		target := max0(int(offset))
+		target := max(0, int(offset))
 		s.fillTo(target)
 		s.position = min(target, len(s.buffer))
 	case io.SeekCurrent:
-		target := max0(s.position + int(offset))
+		target := max(0, s.position+int(offset))
 		s.fillTo(target)
 		s.position = min(target, len(s.buffer))
 	case io.SeekEnd:
@@ -60,7 +60,7 @@ func (s *StreamBuffer) Seek(offset int64, whence int) (int64, error) {
 				s.buffer = append(s.buffer, chunk...)
 			}
 		}
-		target := max0(len(s.buffer) + int(offset))
+		target := max(0, len(s.buffer)+int(offset))
 		s.position = min(target, len(s.buffer))
 	default:
 		return 0, io.ErrUnexpectedEOF
@@ -80,18 +80,4 @@ func (s *StreamBuffer) fillTo(need int) {
 		}
 		s.buffer = append(s.buffer, chunk...)
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max0(v int) int {
-	if v < 0 {
-		return 0
-	}
-	return v
 }

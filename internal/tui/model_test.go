@@ -413,7 +413,6 @@ func TestQueueRowsUseQueuePanelWidth(t *testing.T) {
 		Title:  "Very Long Queue Track Title That Should Use Full Queue Width",
 		Artist: "Wide Artist",
 	}}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.QueueState.Select(intPtr(0))
 
@@ -432,7 +431,6 @@ func TestQueueRowsRenderPrebufferIndicators(t *testing.T) {
 		{ID: "4", Title: "Four", Artist: "D"},
 		{ID: "5", Title: "Five", Artist: "E"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.IsPlaying = true
 	model.setPrebufferStatus("2", deezer.AudioQuality320, PrebufferStatusScheduled)
@@ -563,7 +561,6 @@ func TestQueueScrollsTracksWithoutDroppingQueueInfo(t *testing.T) {
 			Artist: "Artist",
 		})
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(8)
 	model.app.QueueState.Select(intPtr(8))
 
@@ -1363,7 +1360,6 @@ func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 		{ID: "3", Title: "Three", Artist: "C"},
 		{ID: "4", Title: "Four", Artist: "D"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 
 	nextModel, cmd := model.Update(tea.KeyPressMsg(tea.Key{Text: "n"}))
@@ -1409,7 +1405,6 @@ func TestPlaybackFinishedAdvancesQueue(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.currentPlayID = 1
 
@@ -1430,7 +1425,6 @@ func TestPlaybackFinishedRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.RepeatMode = app.RepeatModeOne
 	model.currentPlayID = 1
@@ -1458,7 +1452,6 @@ func TestPlaybackFinishedWrapsQueueInRepeatAllMode(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.RepeatMode = app.RepeatModeAll
 	model.currentPlayID = 1
@@ -1488,7 +1481,6 @@ func TestPlaybackFinishedLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.RepeatMode = app.RepeatModeAll
 	model.app.IsFlowQueue = true
@@ -1520,7 +1512,6 @@ func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "One", Artist: "A", CurrentMS: 174_000, TotalMS: 180_000}
 
@@ -1558,7 +1549,6 @@ func TestCrossfadeProgressRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.NowPlaying = &app.NowPlaying{ID: "2", Title: "Two", Artist: "B", CurrentMS: 176_000, TotalMS: 180_000}
 
@@ -1588,7 +1578,6 @@ func TestCrossfadeProgressWrapsQueueInRepeatAllMode(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.NowPlaying = &app.NowPlaying{ID: "2", Title: "Two", Artist: "B", CurrentMS: 176_000, TotalMS: 180_000}
 
@@ -1623,7 +1612,6 @@ func TestCrossfadeProgressLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.NowPlaying = &app.NowPlaying{ID: "2", Title: "Two", Artist: "B", CurrentMS: 176_000, TotalMS: 180_000}
 
@@ -1651,7 +1639,6 @@ func TestCrossfadeProgressDoesNothingWhenDisabled(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "One", Artist: "A", CurrentMS: 176_000, TotalMS: 180_000}
 
@@ -1671,7 +1658,6 @@ func TestStartingNextTrackClearsStaleNowPlayingAndArtwork(t *testing.T) {
 		{ID: "1", Title: "Old Song", Artist: "A"},
 		{ID: "2", Title: "New Song", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "Old Song", Artist: "A"}
 	model.artworkANSI = "old-art"
@@ -1756,7 +1742,6 @@ func TestViewUsesCompactViewWhenQueueWouldBeTooShort(t *testing.T) {
 		model.app.QueueTracks = append(model.app.QueueTracks, track)
 		model.app.CurrentTracks = append(model.app.CurrentTracks, track)
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.CurrentPlaylistID = stringPtr("__home__")
 
@@ -1799,7 +1784,6 @@ func TestViewKeepsCollectionAndDisplayWhenCompactViewDisabled(t *testing.T) {
 		model.app.QueueTracks = append(model.app.QueueTracks, track)
 		model.app.CurrentTracks = append(model.app.CurrentTracks, track)
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.CurrentPlaylistID = stringPtr("__home__")
 
@@ -1826,7 +1810,6 @@ func TestCompactViewRendersEqualizerInsideStatusWhenHeightAllows(t *testing.T) {
 		}
 		model.app.QueueTracks = append(model.app.QueueTracks, track)
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 
 	view := model.View().Content
@@ -2035,7 +2018,6 @@ func TestSelectingTrackInCurrentCollectionKeepsExistingQueue(t *testing.T) {
 		{ID: "3", Title: "Three", Artist: "C"},
 	}
 	model.app.QueueTracks = append([]app.Track(nil), model.app.CurrentTracks...)
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.MainState.Select(intPtr(2))
 
@@ -2088,7 +2070,6 @@ func TestHandleNextWrapsAtQueueEndWhenRepeatAllEnabled(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 	model.app.RepeatMode = app.RepeatModeAll
 
@@ -2116,7 +2097,6 @@ func TestLoadCollectionKeepsActiveFlowQueueState(t *testing.T) {
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 12
 	model.app.QueueTracks = []app.Track{{ID: "1", Title: "One", Artist: "A"}}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 
 	model.loadCollection("__home__", "Home", []app.Track{{ID: "2", Title: "Two", Artist: "B"}})
@@ -2347,7 +2327,6 @@ func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
 		{ID: "3", Title: "Three", Artist: "C"},
 		{ID: "4", Title: "Four", Artist: "D"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "One", Artist: "A"}
 	model.setPrebufferStatus("2", deezer.AudioQuality320, PrebufferStatusReady)
@@ -2369,7 +2348,6 @@ func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(0)
 
 	nextModel, _ := model.Update(playbackTrackChangedMsg{
@@ -2456,7 +2434,6 @@ func TestStartingLastFlowTrackLoadsNextBatchImmediately(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 
 	cmd := model.startTrackPlayback("2")
@@ -2479,7 +2456,6 @@ func TestAppendedFlowBatchPrebuffersFirstNewTrack(t *testing.T) {
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
 	}
-	model.app.Queue = formatQueue(model.app.QueueTracks)
 	model.app.QueueIndex = intPtr(1)
 
 	nextModel, _ := model.Update(collectionLoadedMsg{

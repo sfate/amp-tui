@@ -127,7 +127,7 @@ func TestHandleRightAndLeftNavigateThroughQueueBetweenSidebarAndMain(t *testing.
 func TestHandleUpAndDownNavigateInsideQueue(t *testing.T) {
 	app := testApp()
 	app.ActivePanel = ActivePanelQueue
-	app.Queue = []string{"One - A", "Two - B", "Three - C"}
+	app.QueueTracks = []Track{track("1", "One", "A"), track("2", "Two", "B"), track("3", "Three", "C")}
 	app.QueueState.Select(intPtr(0))
 
 	app.HandleDown()
@@ -203,7 +203,7 @@ func TestLoadFlowTracksPopulatesQueueAndReturnsFirstTrackWhenAutoplaying(t *test
 	}
 	assertTracks(t, app.CurrentTracks, tracks)
 	assertTracks(t, app.QueueTracks, tracks)
-	assertStrings(t, app.Queue, []string{"One - A", "Two - B"})
+	assertStrings(t, queueLabels(app.QueueTracks), []string{"One - A", "Two - B"})
 	assertSelectedPtr(t, app.QueueIndex, 0)
 	if !app.IsPlaying {
 		t.Fatalf("expected app to be playing")
@@ -233,8 +233,8 @@ func TestAppendFlowTracksSkipsDuplicatesAndAutoplaysFirstNewTrack(t *testing.T) 
 		t.Fatalf("expected 4 current tracks, got %d", len(app.CurrentTracks))
 	}
 	assertSelectedPtr(t, app.QueueIndex, 2)
-	if app.Queue[2] != "Three - C" || app.Queue[3] != "Four - D" {
-		t.Fatalf("unexpected queue tail: %#v", app.Queue)
+	if labels := queueLabels(app.QueueTracks); labels[2] != "Three - C" || labels[3] != "Four - D" {
+		t.Fatalf("unexpected queue tail: %#v", labels)
 	}
 }
 
@@ -476,4 +476,21 @@ func assertTrackIDs(t *testing.T, tracks []Track, want []string) {
 			t.Fatalf("track id mismatch at %d: got %q want %q", i, tracks[i].ID, id)
 		}
 	}
+}
+
+func queueLabels(tracks []Track) []string {
+	labels := make([]string, 0, len(tracks))
+	for _, t := range tracks {
+		labels = append(labels, t.QueueLabel())
+	}
+	return labels
+}
+
+func TestHandleDownStopsAtLastNavItem(t *testing.T) {
+	app := testApp()
+	app.ActivePanel = ActivePanelNavigation
+	for range len(NavItems) + 2 {
+		app.HandleDown()
+	}
+	assertSelected(t, app.NavState.Selected(), len(NavItems)-1)
 }
