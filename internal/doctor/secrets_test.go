@@ -38,3 +38,14 @@ func TestSecretStoreCheckReportsBackendError(t *testing.T) {
 		t.Fatalf("hint %q does not name the fallback file", check.Hint)
 	}
 }
+
+func TestMissingKeychainWarnsWithoutFailingRun(t *testing.T) {
+	var out strings.Builder
+	check := SecretStoreCheck(&secretProbe{err: errors.New("no secret service")}, "/tmp/secrets.json")
+	if err := Run(context.Background(), &out, []Check{check}); err != nil {
+		t.Fatalf("Run() = %v, want nil because the file fallback works", err)
+	}
+	if !strings.HasPrefix(out.String(), "warn  ") {
+		t.Fatalf("output %q, want a warn line", out.String())
+	}
+}

@@ -14,7 +14,9 @@ import (
 type Check struct {
 	Name string
 	Hint string
-	Run  func(ctx context.Context) error
+	// Optional checks print a warning and do not fail the run, because amp-tui has a fallback.
+	Optional bool
+	Run      func(ctx context.Context) error
 }
 
 // ErrFailed reports that one or more checks failed.
@@ -28,8 +30,13 @@ func Run(ctx context.Context, out io.Writer, checks []Check) error {
 		err := check.Run(checkCtx)
 		cancel()
 		if err != nil {
-			failed = true
-			_, _ = fmt.Fprintf(out, "FAIL  %s: %v\n", check.Name, err)
+			label := "FAIL"
+			if check.Optional {
+				label = "warn"
+			} else {
+				failed = true
+			}
+			_, _ = fmt.Fprintf(out, "%-4s  %s: %v\n", label, check.Name, err)
 			if check.Hint != "" {
 				_, _ = fmt.Fprintf(out, "      %s\n", check.Hint)
 			}
