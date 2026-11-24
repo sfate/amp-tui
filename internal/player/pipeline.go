@@ -3,16 +3,18 @@ package player
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
-	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
 const (
-	DefaultDeezerChunkSize = 2048
-	DefaultPrebufferBytes  = 512 * 1024
+	DefaultChunkSize      = 2048
+	DefaultPrebufferBytes = 512 * 1024
 )
 
 type BufferingStage string
@@ -20,24 +22,16 @@ type BufferingStage string
 const (
 	BufferingStageResolving   BufferingStage = "Resolving..."
 	BufferingStageDownloading BufferingStage = "Downloading..."
-	BufferingStageDecrypting  BufferingStage = "Decrypting..."
 	BufferingStagePreparing   BufferingStage = "Preparing..."
 	BufferingStageReady       BufferingStage = "Ready"
 )
 
-type MediaClient interface {
-	FetchAPIToken(ctx context.Context) (string, error)
-	FetchTrackMetadata(ctx context.Context, trackID string) (deezer.TrackMetadata, error)
-	FetchMediaURL(ctx context.Context, req deezer.MediaRequest) (string, error)
-	OpenSignedStream(ctx context.Context, signedURL string) (io.ReadCloser, int64, error)
-}
-
 type Backend interface {
-	Start(stream io.ReadSeeker, quality deezer.AudioQuality, handler EventHandler, onFinished func(error)) (Controller, error)
+	Start(stream io.ReadSeeker, format core.AudioFormat, handler EventHandler, onFinished func(error)) (Controller, error)
 }
 
 type SeekBackend interface {
-	StartAt(stream io.ReadSeeker, quality deezer.AudioQuality, initialMS uint64, handler EventHandler, onFinished func(error)) (Controller, error)
+	StartAt(stream io.ReadSeeker, format core.AudioFormat, initialMS uint64, handler EventHandler, onFinished func(error)) (Controller, error)
 }
 
 type Controller interface {
@@ -48,7 +42,7 @@ type Controller interface {
 }
 
 type EventHandler struct {
-	OnTrackChanged      func(meta deezer.TrackMetadata, quality deezer.AudioQuality, initialMS uint64)
+	OnTrackChanged      func(info core.TrackInfo, quality core.Quality, initialMS uint64)
 	OnBufferingProgress func(percent uint8, stage BufferingStage)
 	OnPlaybackProgress  func(currentMS, totalMS uint64)
 	OnAudioBands        func([]uint8)
@@ -67,12 +61,13 @@ type Session struct {
 	done       chan error
 }
 
+// StartTrackPipeline resolves trackID through streams and plays its bytes on backend.
 func StartTrackPipeline(
 	ctx context.Context,
-	client MediaClient,
+	streams provider.StreamSource,
 	backend Backend,
 	trackID string,
-	quality deezer.AudioQuality,
+	quality core.Quality,
 	seekMS uint64,
 	handler EventHandler,
 	opts PipelineOptions,
@@ -81,12 +76,12 @@ func StartTrackPipeline(
 		opts.PrebufferBytes = DefaultPrebufferBytes
 	}
 	if opts.ChunkSize <= 0 {
-		opts.ChunkSize = DefaultDeezerChunkSize
+		opts.ChunkSize = DefaultChunkSize
 	}
 
 	session := &Session{done: make(chan error, 1)}
 	go func() {
-		session.done <- runTrackPipeline(ctx, client, backend, session, trackID, quality, seekMS, handler, opts)
+		session.done <- runTrackPipeline(ctx, streams, backend, session, trackID, quality, seekMS, handler, opts)
 		close(session.done)
 	}()
 	return session
@@ -143,61 +138,44 @@ func (s *Session) withController(fn func(Controller)) {
 
 func runTrackPipeline(
 	ctx context.Context,
-	client MediaClient,
+	streams provider.StreamSource,
 	backend Backend,
 	session *Session,
 	trackID string,
-	quality deezer.AudioQuality,
+	quality core.Quality,
 	seekMS uint64,
 	handler EventHandler,
 	opts PipelineOptions,
 ) error {
-	if _, err := client.FetchAPIToken(ctx); err != nil {
-		return reportErr(handler, err)
-	}
-
-	metadata, err := client.FetchTrackMetadata(ctx, trackID)
+	src, err := streams.Resolve(ctx, trackID, quality)
 	if err != nil {
 		return reportErr(handler, err)
+	}
+	if src.Bytes == nil {
+		return reportErr(handler, fmt.Errorf("track %s has no byte stream to play", trackID))
 	}
 
 	initialMS := seekMS
-	if quality == deezer.AudioQualityFlac {
+	if !src.Seekable {
 		initialMS = 0
 	}
 	if handler.OnTrackChanged != nil {
-		handler.OnTrackChanged(metadata, quality, initialMS)
+		handler.OnTrackChanged(src.Info, src.Quality, initialMS)
 	}
 
-	signedURL, err := client.FetchMediaURL(ctx, deezer.MediaRequest{
-		TrackToken: metadata.TrackToken,
-		Quality:    quality,
-	})
-	if err != nil {
-		return reportErr(handler, err)
-	}
-
-	stream, contentLength, err := client.OpenSignedStream(ctx, signedURL)
+	stream, err := src.Bytes.OpenRange(ctx, 0)
 	if err != nil {
 		return reportErr(handler, err)
 	}
 	defer func() { _ = stream.Close() }()
 
-	trackKey := deezer.DeriveBlowfishKey(metadata.ID)
-	trackDurationMS := uint64(0)
-	if metadata.DurationSecs != nil {
-		trackDurationMS = *metadata.DurationSecs * 1000
-	} else {
-		trackDurationMS = estimateTotalDurationMS(contentLength, quality)
-	}
+	contentLength := src.Bytes.Size()
+	trackDurationMS := src.Info.DurationMS
 	if trackDurationMS == 0 {
-		trackDurationMS = 1
+		trackDurationMS = estimateTotalDurationMS(contentLength, src.BytesPerSecond)
 	}
 
-	effectiveSeekMS := seekMS
-	if quality == deezer.AudioQualityFlac {
-		effectiveSeekMS = 0
-	}
+	effectiveSeekMS := initialMS
 	if effectiveSeekMS >= trackDurationMS {
 		effectiveSeekMS = trackDurationMS - 1
 	}
@@ -228,9 +206,9 @@ func runTrackPipeline(
 		var controller Controller
 		var err error
 		if seeker, ok := backend.(SeekBackend); ok {
-			controller, err = seeker.StartAt(buffer, quality, effectiveSeekMS, handler, finished)
+			controller, err = seeker.StartAt(buffer, src.Format, effectiveSeekMS, handler, finished)
 		} else {
-			controller, err = backend.Start(buffer, quality, handler, finished)
+			controller, err = backend.Start(buffer, src.Format, handler, finished)
 		}
 		if err != nil {
 			return err
@@ -246,7 +224,6 @@ func runTrackPipeline(
 	}
 	reportBufferingProgress(handler, 0, prebufferTarget, BufferingStageDownloading)
 	pending := make([]byte, 0, opts.ChunkSize*2)
-	chunkIndex := 0
 	readBuf := make([]byte, 32*1024)
 
 	for {
@@ -258,11 +235,6 @@ func runTrackPipeline(
 		for len(pending) >= opts.ChunkSize {
 			chunk := append([]byte(nil), pending[:opts.ChunkSize]...)
 			pending = pending[opts.ChunkSize:]
-
-			if err := deezer.DecryptChunkInPlaceWithKey(trackKey[:], chunkIndex, chunk); err != nil {
-				close(ch)
-				return reportErr(handler, err)
-			}
 
 			queuedBytes += len(chunk)
 			reportBufferingProgress(handler, queuedBytes, prebufferTarget, BufferingStageDownloading)
@@ -280,8 +252,6 @@ func runTrackPipeline(
 					return reportErr(handler, err)
 				}
 			}
-
-			chunkIndex++
 		}
 
 		if errors.Is(readErr, io.EOF) {
@@ -295,10 +265,6 @@ func runTrackPipeline(
 
 	if len(pending) > 0 {
 		tail := append([]byte(nil), pending...)
-		if err := deezer.DecryptChunkInPlaceWithKey(trackKey[:], chunkIndex, tail); err != nil {
-			close(ch)
-			return reportErr(handler, err)
-		}
 		select {
 		case ch <- tail:
 		case <-ctx.Done():
@@ -345,23 +311,15 @@ func reportBufferingProgress(handler EventHandler, current, total int, stage Buf
 	handler.OnBufferingProgress(uint8(percent), stage)
 }
 
-func estimateTotalDurationMS(totalBytes int64, quality deezer.AudioQuality) uint64 {
-	var bytesPerSec uint64
-	switch quality {
-	case deezer.AudioQuality128:
-		bytesPerSec = 16_000
-	case deezer.AudioQuality320:
-		bytesPerSec = 40_000
-	case deezer.AudioQualityFlac:
-		bytesPerSec = 90_000
-	default:
-		bytesPerSec = 40_000
+// estimateTotalDurationMS assumes 320 kbps MP3 when the source gives no byte rate.
+func estimateTotalDurationMS(totalBytes int64, bytesPerSecond int) uint64 {
+	if bytesPerSecond <= 0 {
+		bytesPerSecond = 40_000
 	}
-
 	if totalBytes <= 0 {
 		return 224_000
 	}
-	duration := uint64(totalBytes) * 1000 / bytesPerSec
+	duration := uint64(totalBytes) * 1000 / uint64(bytesPerSecond)
 	if duration == 0 {
 		return 1
 	}

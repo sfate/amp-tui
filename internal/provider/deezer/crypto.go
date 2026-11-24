@@ -36,15 +36,6 @@ func DeriveBlowfishKey(trackID string) [16]byte {
 	return key
 }
 
-func DecryptAudioStream(trackID string, encrypted []byte) ([]byte, error) {
-	key := DeriveBlowfishKey(trackID)
-	return DecryptAudioStreamWithKey(key[:], encrypted)
-}
-
-func DecryptChunkedStream(trackID string, encrypted []byte) ([]byte, error) {
-	return DecryptAudioStream(trackID, encrypted)
-}
-
 func DecryptChunkInPlaceWithKey(key []byte, chunkIndex int, chunk []byte) error {
 	if len(key) < 4 || len(key) > 56 {
 		return errors.New("invalid Blowfish key length")

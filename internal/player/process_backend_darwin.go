@@ -9,7 +9,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/core"
 )
 
 type ProcessBackend struct{}
@@ -18,15 +18,15 @@ func NewProcessBackend() *ProcessBackend {
 	return &ProcessBackend{}
 }
 
-func (b *ProcessBackend) Start(stream io.ReadSeeker, quality deezer.AudioQuality, _ EventHandler, onFinished func(error)) (Controller, error) {
-	file, err := os.CreateTemp("", "amp-tui-*"+qualityExtension(quality))
+func (b *ProcessBackend) Start(stream io.ReadSeeker, format core.AudioFormat, _ EventHandler, onFinished func(error)) (Controller, error) {
+	file, err := os.CreateTemp("", "amp-tui-*"+format.Extension())
 	if err != nil {
 		return nil, fmt.Errorf("create temp audio file: %w", err)
 	}
 
 	controller := &processController{
 		filePath:      file.Name(),
-		quality:       quality,
+		format:        format,
 		onFinished:    onFinished,
 		started:       make(chan struct{}),
 		initialVolume: 1,
@@ -40,7 +40,7 @@ type processController struct {
 	mu            sync.Mutex
 	cmd           *exec.Cmd
 	filePath      string
-	quality       deezer.AudioQuality
+	format        core.AudioFormat
 	onFinished    func(error)
 	started       chan struct{}
 	doneOnce      sync.Once
@@ -152,14 +152,5 @@ func (c *processController) SetVolume(v float32) {
 func (c *processController) finish(err error) {
 	if c.onFinished != nil {
 		c.onFinished(err)
-	}
-}
-
-func qualityExtension(quality deezer.AudioQuality) string {
-	switch quality {
-	case deezer.AudioQualityFlac:
-		return ".flac"
-	default:
-		return ".mp3"
 	}
 }

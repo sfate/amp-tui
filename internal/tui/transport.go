@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 func (m *Model) togglePlayPause() {
@@ -109,7 +108,7 @@ func (m Model) syncMediaControl() {
 		Volume:      m.app.Volume,
 		CanNext:     m.canGoNext(),
 		CanPrevious: m.canGoPrevious(),
-		CanSeek:     m.app.NowPlaying != nil && m.currentQuality != deezer.AudioQualityFlac,
+		CanSeek:     m.app.NowPlaying != nil && m.currentQuality.Seekable,
 		RepeatMode:  appRepeatMode(m.app.RepeatMode),
 	}
 	if now := m.app.NowPlaying; now != nil {
@@ -149,7 +148,7 @@ func (m *Model) handleNext() tea.Cmd {
 		nextIndex := current + 1
 		m.app.QueueIndex = intPtr(nextIndex)
 		m.app.QueueState.Select(intPtr(nextIndex))
-		return m.scheduleTrackPlayback(m.app.QueueTracks[nextIndex].ID, qualityFromConfig(m.app.Config.DefaultQuality), 0, true)
+		return m.scheduleTrackPlayback(m.app.QueueTracks[nextIndex].ID, m.configuredQuality(), 0, true)
 	}
 	if cmd := m.loadMoreFlow(true); cmd != nil {
 		return cmd
@@ -157,10 +156,10 @@ func (m *Model) handleNext() tea.Cmd {
 	if m.app.RepeatMode == app.RepeatModeAll && len(m.app.QueueTracks) > 0 {
 		m.app.QueueIndex = intPtr(0)
 		m.app.QueueState.Select(intPtr(0))
-		return m.scheduleTrackPlayback(m.app.QueueTracks[0].ID, qualityFromConfig(m.app.Config.DefaultQuality), 0, true)
+		return m.scheduleTrackPlayback(m.app.QueueTracks[0].ID, m.configuredQuality(), 0, true)
 	}
 	if m.app.RepeatMode == app.RepeatModeOne && current >= 0 && current < len(m.app.QueueTracks) {
-		return m.scheduleTrackPlayback(m.app.QueueTracks[current].ID, qualityFromConfig(m.app.Config.DefaultQuality), 0, true)
+		return m.scheduleTrackPlayback(m.app.QueueTracks[current].ID, m.configuredQuality(), 0, true)
 	}
 	return nil
 }
@@ -176,7 +175,7 @@ func (m *Model) handlePrevious() tea.Cmd {
 	prevIndex := current - 1
 	m.app.QueueIndex = intPtr(prevIndex)
 	m.app.QueueState.Select(intPtr(prevIndex))
-	return m.scheduleTrackPlayback(m.app.QueueTracks[prevIndex].ID, qualityFromConfig(m.app.Config.DefaultQuality), 0, true)
+	return m.scheduleTrackPlayback(m.app.QueueTracks[prevIndex].ID, m.configuredQuality(), 0, true)
 }
 
 func (m *Model) adjustVolume(delta int) {

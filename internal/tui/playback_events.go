@@ -66,21 +66,17 @@ func (m *Model) onPlaybackTrackChanged(msg playbackTrackChangedMsg) tea.Cmd {
 	if msg.playID != m.currentPlayID && msg.playID != m.nextPlaybackID {
 		return listenPlaybackEventCmd(m.playbackEvents)
 	}
-	totalMS := uint64(0)
-	if msg.meta.DurationSecs != nil {
-		totalMS = *msg.meta.DurationSecs * 1000
-	}
 	m.app.NowPlaying = &app.NowPlaying{
-		ID:          msg.meta.ID,
-		Title:       sanitize.Text(msg.meta.Title),
-		Artist:      sanitize.Text(msg.meta.Artist),
-		Quality:     configQualityFromDeezer(msg.quality),
+		ID:          msg.info.ID,
+		Title:       sanitize.Text(msg.info.Title),
+		Artist:      sanitize.Text(msg.info.Artist),
+		Quality:     msg.quality,
 		CurrentMS:   msg.initialMS,
-		TotalMS:     totalMS,
-		AlbumArtURL: msg.meta.AlbumArtURL,
+		TotalMS:     msg.info.DurationMS,
+		AlbumArtURL: msg.info.AlbumArtURL,
 	}
 	if _, ok := m.runtime.(PrebufferingRuntime); ok {
-		m.setPrebufferStatus(msg.meta.ID, msg.quality, PrebufferStatusReady)
+		m.setPrebufferStatus(msg.info.ID, msg.quality, PrebufferStatusReady)
 	}
 	m.progress.bufferingPercent = nil
 	m.progress.baseMS = msg.initialMS
@@ -96,7 +92,7 @@ func (m *Model) onPlaybackTrackChanged(msg playbackTrackChangedMsg) tea.Cmd {
 	if m.progress.active {
 		nextCmd = tea.Batch(nextCmd, playbackTickCmd())
 	}
-	if artworkCmd := m.loadArtwork(msg.meta.AlbumArtURL); artworkCmd != nil {
+	if artworkCmd := m.loadArtwork(msg.info.AlbumArtURL); artworkCmd != nil {
 		return tea.Batch(nextCmd, artworkCmd)
 	}
 	return nextCmd

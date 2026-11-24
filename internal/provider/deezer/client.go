@@ -78,6 +78,7 @@ type TrackMetadata struct {
 	ID           string
 	Title        string
 	Artist       string
+	Album        string
 	TrackToken   string
 	DurationSecs *uint64
 	AlbumArtURL  *string
@@ -242,6 +243,7 @@ func (c *Client) FetchTrackMetadata(ctx context.Context, trackID string) (TrackM
 		getString(results, "ART_NAME"),
 		"Unknown artist",
 	)
+	album := firstNonEmptyString(getString(result, "ALB_TITLE"), getString(results, "ALB_TITLE"))
 	duration := getUint64Ptr(result, "DURATION")
 
 	var albumArtURL *string
@@ -259,6 +261,7 @@ func (c *Client) FetchTrackMetadata(ctx context.Context, trackID string) (TrackM
 		ID:           id,
 		Title:        title,
 		Artist:       artist,
+		Album:        album,
 		TrackToken:   trackToken,
 		DurationSecs: duration,
 		AlbumArtURL:  albumArtURL,
@@ -325,78 +328,6 @@ func (c *Client) FetchMediaURL(ctx context.Context, reqInput MediaRequest) (stri
 		return "", errors.New("media.get_url response missing signed source URL")
 	}
 	return signedURL, nil
-}
-
-func (c *Client) FetchEncryptedBytesFromSignedURL(ctx context.Context, signedURL string) ([]byte, error) {
-	return c.FetchEncryptedBytesFromSignedURLWithProgress(ctx, signedURL, nil)
-}
-
-func (c *Client) FetchEncryptedBytesFromSignedURLWithProgress(ctx context.Context, signedURL string, onProgress func(downloaded, total int64)) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signedURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build signed CDN request: %w", err)
-	}
-	c.applyHeaders(req, true)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("download encrypted audio stream: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("signed CDN request returned status %d", resp.StatusCode)
-	}
-
-	var reader io.Reader = resp.Body
-	if onProgress != nil {
-		reader = &progressReader{
-			reader:     resp.Body,
-			total:      resp.ContentLength,
-			onProgress: onProgress,
-		}
-		onProgress(0, resp.ContentLength)
-	}
-	payload, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("read encrypted audio bytes: %w", err)
-	}
-	return payload, nil
-}
-
-type progressReader struct {
-	reader     io.Reader
-	downloaded int64
-	total      int64
-	onProgress func(downloaded, total int64)
-}
-
-func (r *progressReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	if n > 0 {
-		r.downloaded += int64(n)
-		r.onProgress(r.downloaded, r.total)
-	}
-	return n, err
-}
-
-func (c *Client) OpenSignedStream(ctx context.Context, signedURL string) (io.ReadCloser, int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signedURL, nil)
-	if err != nil {
-		return nil, 0, fmt.Errorf("build signed stream request: %w", err)
-	}
-	c.applyHeaders(req, true)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("open signed Deezer audio stream: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer func() { _ = resp.Body.Close() }()
-		return nil, 0, fmt.Errorf("signed Deezer audio stream returned status %d", resp.StatusCode)
-	}
-
-	return resp.Body, resp.ContentLength, nil
 }
 
 func (c *Client) FetchPlaylistMetadata(ctx context.Context, playlistID string) (PlaylistMetadata, error) {

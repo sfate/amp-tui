@@ -5,31 +5,31 @@ package tui
 import (
 	"context"
 
+	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type defaultPlayerRuntime struct {
-	client  player.MediaClient
+	streams provider.StreamSource
 	backend player.Backend
 }
 
 func newPlayerRuntime(p provider.Provider) PlayerRuntime {
-	capable, ok := p.(playbackCapableProvider)
-	if !ok || capable.DeezerClient() == nil {
+	streams, ok := p.(provider.StreamSource)
+	if !ok {
 		return nil
 	}
 	return &defaultPlayerRuntime{
-		client:  capable.DeezerClient(),
+		streams: streams,
 		backend: player.NewProcessBackend(),
 	}
 }
 
-func (r *defaultPlayerRuntime) Start(trackID string, quality deezer.AudioQuality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
+func (r *defaultPlayerRuntime) Start(trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
 	session := player.StartTrackPipeline(
 		context.Background(),
-		r.client,
+		r.streams,
 		r.backend,
 		trackID,
 		quality,

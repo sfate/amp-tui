@@ -131,8 +131,3 @@ func (p *Provider) Search(ctx context.Context, query string) (provider.SearchRes
 		Artists:   mapArtists(results.Artists),
 	}, nil
 }
-
-// DeezerClient serves the playback runtime until playback moves behind the provider.
-func (p *Provider) DeezerClient() *Client {
-	return p.client
-}

@@ -17,9 +17,9 @@ import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type fakeLoader struct {
@@ -96,10 +96,63 @@ func (f *fakeLoader) BrowserLogin(context.Context) (string, error) {
 	return "", errors.New("no browser in tests")
 }
 
-// testRegistry wires the real Deezer provider, which works signed out without network.
+var (
+	testQuality128  = core.Quality{ID: "Kbps128", Label: "128 kbps", Seekable: true}
+	testQuality320  = core.Quality{ID: "Kbps320", Label: "320 kbps", Seekable: true}
+	testQualityFlac = core.Quality{ID: "Flac", Label: "FLAC", Seekable: false}
+)
+
+// fakeStreamLoader adds a quality ladder to fakeLoader; the Deezer-like ladder is the default.
+type fakeStreamLoader struct {
+	*fakeLoader
+	ladder []core.Quality
+}
+
+func withStream(l *fakeLoader) *fakeStreamLoader {
+	return &fakeStreamLoader{fakeLoader: l, ladder: []core.Quality{testQuality128, testQuality320, testQualityFlac}}
+}
+
+func (f *fakeStreamLoader) Qualities() []core.Quality {
+	return append([]core.Quality(nil), f.ladder...)
+}
+
+func (f *fakeStreamLoader) DefaultQuality() core.Quality {
+	return f.ladder[len(f.ladder)/2]
+}
+
+func (f *fakeStreamLoader) Resolve(context.Context, string, core.Quality) (provider.Source, error) {
+	return provider.Source{}, errors.New("fake provider does not stream")
+}
+
+// registryProvider stands in for the signed-out Deezer provider in registry tests.
+type registryProvider struct {
+	*fakeStreamLoader
+}
+
+func (registryProvider) ID() provider.ID { return "deezer" }
+
+func (registryProvider) Name() string { return "Deezer" }
+
+// NormalizeSecret accepts a raw token or a Cookie header that holds arl=.
+func (registryProvider) NormalizeSecret(input string) (string, error) {
+	input = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(input), "Cookie:"))
+	for _, part := range strings.Split(input, ";") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(part), "arl="); ok {
+			return value, nil
+		}
+	}
+	if input == "" || strings.Contains(input, "=") {
+		return "", errors.New("no token found")
+	}
+	return input, nil
+}
+
+// testRegistry wires a fake provider, which works signed out without network.
 func testRegistry() *provider.Registry {
 	reg := provider.NewRegistry()
-	deezer.Register(reg)
+	reg.Register("deezer", "Deezer", func(config.Config) (provider.Provider, error) {
+		return registryProvider{withStream(&fakeLoader{})}, nil
+	})
 	return reg
 }
 
@@ -126,7 +179,7 @@ func firstNonTickMsg(cmd tea.Cmd) tea.Msg {
 
 type fakePlaybackRuntime struct {
 	started     []string
-	qualities   []deezer.AudioQuality
+	qualities   []core.Quality
 	seeked      []uint64
 	handlers    []player.EventHandler
 	prebuffered [][]string
@@ -136,7 +189,7 @@ type fakePlaybackRuntime struct {
 	mediaStates []MediaControlState
 }
 
-func (f *fakePlaybackRuntime) Start(trackID string, quality deezer.AudioQuality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
+func (f *fakePlaybackRuntime) Start(trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
 	f.started = append(f.started, trackID)
 	f.qualities = append(f.qualities, quality)
 	f.seeked = append(f.seeked, seekMS)
@@ -148,13 +201,13 @@ func (f *fakePlaybackRuntime) Start(trackID string, quality deezer.AudioQuality,
 	return f.session, nil
 }
 
-func (f *fakePlaybackRuntime) Prebuffer(trackIDs []string, _ deezer.AudioQuality, events chan<- tea.Msg) {
+func (f *fakePlaybackRuntime) Prebuffer(trackIDs []string, _ core.Quality, events chan<- tea.Msg) {
 	f.prebuffered = append(f.prebuffered, append([]string(nil), trackIDs...))
 	if events == nil {
 		return
 	}
 	for _, trackID := range trackIDs {
-		events <- prebufferStatusMsg{trackID: trackID, quality: deezer.AudioQuality320, status: PrebufferStatusLoading}
+		events <- prebufferStatusMsg{trackID: trackID, quality: testQuality320, status: PrebufferStatusLoading}
 	}
 }
 
@@ -281,7 +334,7 @@ func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
 	cfg := config.Default()
 	cfg.ARL = "existing-token"
-	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.ready = true
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "O"}))
@@ -381,6 +434,7 @@ func TestViewShowsProgressBar(t *testing.T) {
 		ID:        "2",
 		Title:     "Live Song",
 		Artist:    "Current Artist",
+		Quality:   testQuality320,
 		CurrentMS: 45000,
 		TotalMS:   180000,
 	}
@@ -475,9 +529,9 @@ func TestQueueRowsRenderPrebufferIndicators(t *testing.T) {
 	}
 	model.app.QueueIndex = intPtr(0)
 	model.app.IsPlaying = true
-	model.setPrebufferStatus("2", deezer.AudioQuality320, PrebufferStatusScheduled)
-	model.setPrebufferStatus("3", deezer.AudioQuality320, PrebufferStatusLoading)
-	model.setPrebufferStatus("4", deezer.AudioQuality320, PrebufferStatusReady)
+	model.setPrebufferStatus("2", testQuality320, PrebufferStatusScheduled)
+	model.setPrebufferStatus("3", testQuality320, PrebufferStatusLoading)
+	model.setPrebufferStatus("4", testQuality320, PrebufferStatusReady)
 
 	view := model.renderQueue(80, 20)
 	for _, want := range []string{"▶", "○", "◐", "✓", "-"} {
@@ -649,9 +703,9 @@ func TestCollectionTracksScrollUnderFixedHeader(t *testing.T) {
 
 func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 	cfg := config.Default()
-	cfg.DefaultQuality = config.AudioQuality320
+	cfg.DefaultQuality = testQuality320.ID
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), runtime)
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)
@@ -663,10 +717,10 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "enter"}))
 	updated := nextModel.(Model)
-	if updated.app.Config.DefaultQuality != config.AudioQualityFlac {
+	if updated.app.Config.DefaultQuality != testQualityFlac.ID {
 		t.Fatalf("expected quality to cycle to FLAC, got %s", updated.app.Config.DefaultQuality)
 	}
-	if len(saved) != 1 || saved[0].DefaultQuality != config.AudioQualityFlac {
+	if len(saved) != 1 || saved[0].DefaultQuality != testQualityFlac.ID {
 		t.Fatalf("expected FLAC quality to be persisted, got %#v", saved)
 	}
 
@@ -676,7 +730,7 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 	}
 	nextModel, _ = updated.Update(cmd())
 	_ = nextModel.(Model)
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != deezer.AudioQualityFlac {
+	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQualityFlac {
 		t.Fatalf("expected playback to use FLAC quality, got %#v", runtime.qualities)
 	}
 }
@@ -788,7 +842,7 @@ func TestEscWhileSearchingFocusesLibrary(t *testing.T) {
 }
 
 func TestSettingsVolumeTakesEffectOnActiveSession(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	session := &fakePlaybackSession{}
 	model.session = session
 	model.app.Volume = 50
@@ -808,7 +862,7 @@ func TestSettingsVolumeTakesEffectOnActiveSession(t *testing.T) {
 
 func TestCrossfadeSettingUsesFadeStopWhenReplacingSession(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.session = session
 	model.app.Config.CrossfadeEnabled = true
 	model.app.Config.CrossfadeDurationMS = 3000
@@ -830,7 +884,7 @@ func TestCrossfadeSettingUsesFadeStopWhenReplacingSession(t *testing.T) {
 
 func TestSpacebarStartsSelectedTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.width = 120
 	model.height = 40
 	model.app.ActivePanel = app.ActivePanelMain
@@ -856,7 +910,7 @@ func TestSpacebarStartsSelectedTrack(t *testing.T) {
 }
 
 func TestPlaybackStartHonorsPendingPause(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	session := &fakePlaybackSession{}
 	model.nextPlaybackID = 1
 	model.pauseRequested = true
@@ -894,8 +948,8 @@ func TestBufferingProgressShowsPercentageAndStage(t *testing.T) {
 
 	nextModel, _ = updated.Update(playbackTrackChangedMsg{
 		playID:  7,
-		meta:    deezer.TrackMetadata{ID: "1", Title: "Song", Artist: "Artist"},
-		quality: deezer.AudioQuality320,
+		info:    core.TrackInfo{ID: "1", Title: "Song", Artist: "Artist"},
+		quality: testQuality320,
 	})
 	updated = nextModel.(Model)
 	if updated.progress.bufferingPercent != nil {
@@ -908,8 +962,8 @@ func TestBufferingProgressKeepsListeningForTrackChanged(t *testing.T) {
 	model.currentPlayID = 7
 	model.playbackEvents <- playbackTrackChangedMsg{
 		playID:  7,
-		meta:    deezer.TrackMetadata{ID: "1", Title: "Loaded Song", Artist: "Artist"},
-		quality: deezer.AudioQuality320,
+		info:    core.TrackInfo{ID: "1", Title: "Loaded Song", Artist: "Artist"},
+		quality: testQuality320,
 	}
 
 	nextModel, cmd := model.Update(bufferingProgressMsg{playID: 7, percent: 42})
@@ -960,8 +1014,8 @@ func TestTrackChangedStartsPlayingStateBeforeProgressEvent(t *testing.T) {
 
 	nextModel, cmd := model.Update(playbackTrackChangedMsg{
 		playID:    7,
-		meta:      deezer.TrackMetadata{ID: "1", Title: "Song", Artist: "Artist"},
-		quality:   deezer.AudioQuality320,
+		info:      core.TrackInfo{ID: "1", Title: "Song", Artist: "Artist"},
+		quality:   testQuality320,
 		initialMS: 0,
 	})
 	updated := nextModel.(Model)
@@ -988,8 +1042,8 @@ func TestStalePlaybackEventsKeepListenerAlive(t *testing.T) {
 	model.nextPlaybackID = 2
 	model.playbackEvents <- playbackTrackChangedMsg{
 		playID:  2,
-		meta:    deezer.TrackMetadata{ID: "2", Title: "Current Song", Artist: "Artist"},
-		quality: deezer.AudioQuality320,
+		info:    core.TrackInfo{ID: "2", Title: "Current Song", Artist: "Artist"},
+		quality: testQuality320,
 	}
 
 	nextModel, cmd := model.Update(bufferingProgressMsg{playID: 1, percent: 42})
@@ -1087,7 +1141,7 @@ func TestEnterOnFlowLoadsQueueAndMarksFlow(t *testing.T) {
 		},
 	}
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), loader, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), runtime)
 	model.width = 120
 	model.height = 40
 	model.app.NavState.Select(intPtr(1))
@@ -1129,7 +1183,7 @@ func TestEnterOnFlowLoadsQueueAndMarksFlow(t *testing.T) {
 }
 
 func TestTogglePlayPauseControlsSession(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	session := &fakePlaybackSession{}
 	model.session = session
 	model.app.IsPlaying = true
@@ -1147,7 +1201,7 @@ func TestTogglePlayPauseControlsSession(t *testing.T) {
 
 func TestMediaControlToggleControlsSession(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	session := &fakePlaybackSession{}
 	model.session = session
 	model.app.IsPlaying = true
@@ -1164,14 +1218,14 @@ func TestMediaControlToggleControlsSession(t *testing.T) {
 
 func TestMediaControlSetPositionSeeksCurrentTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
-	model.currentQuality = deezer.AudioQuality320
+	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
 		ID:        "track-1",
 		Title:     "Song",
 		Artist:    "Artist",
-		Quality:   config.AudioQuality320,
+		Quality:   testQuality320,
 		CurrentMS: 30_000,
 		TotalMS:   120_000,
 	}
@@ -1190,7 +1244,7 @@ func TestMediaControlSetPositionSeeksCurrentTrack(t *testing.T) {
 
 func TestPlaybackTrackChangedSyncsMediaControlMetadata(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
 	durationSecs := uint64(180)
@@ -1198,8 +1252,8 @@ func TestPlaybackTrackChangedSyncsMediaControlMetadata(t *testing.T) {
 
 	nextModel, _ := model.Update(playbackTrackChangedMsg{
 		playID:    1,
-		meta:      deezer.TrackMetadata{ID: "track-1", Title: "Song", Artist: "Artist", DurationSecs: &durationSecs, AlbumArtURL: &artURL},
-		quality:   deezer.AudioQuality320,
+		info:      core.TrackInfo{ID: "track-1", Title: "Song", Artist: "Artist", DurationMS: durationSecs * 1000, AlbumArtURL: &artURL},
+		quality:   testQuality320,
 		initialMS: 12_000,
 	})
 	_ = nextModel.(Model)
@@ -1259,14 +1313,14 @@ func TestRepeatKeyCyclesRepeatMode(t *testing.T) {
 
 func TestSeekForwardRestartsCurrentTrackAtNewPosition(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
-	model.currentQuality = deezer.AudioQuality320
+	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
 		ID:        "track-1",
 		Title:     "Song",
 		Artist:    "Artist",
-		Quality:   config.AudioQuality320,
+		Quality:   testQuality320,
 		CurrentMS: 30_000,
 		TotalMS:   120_000,
 	}
@@ -1288,14 +1342,14 @@ func TestSeekForwardRestartsCurrentTrackAtNewPosition(t *testing.T) {
 
 func TestSeekBackwardClampsToStart(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
-	model.currentQuality = deezer.AudioQuality320
+	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
 		ID:        "track-1",
 		Title:     "Song",
 		Artist:    "Artist",
-		Quality:   config.AudioQuality320,
+		Quality:   testQuality320,
 		CurrentMS: 3_000,
 		TotalMS:   120_000,
 	}
@@ -1313,14 +1367,14 @@ func TestSeekBackwardClampsToStart(t *testing.T) {
 }
 
 func TestSeekIsIgnoredForFlacPlayback(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.currentTrackID = "track-1"
-	model.currentQuality = deezer.AudioQualityFlac
+	model.currentQuality = testQualityFlac
 	model.app.NowPlaying = &app.NowPlaying{
 		ID:        "track-1",
 		Title:     "Song",
 		Artist:    "Artist",
-		Quality:   config.AudioQualityFlac,
+		Quality:   testQualityFlac,
 		CurrentMS: 30_000,
 		TotalMS:   120_000,
 	}
@@ -1337,14 +1391,14 @@ func TestSeekIsIgnoredForFlacPlayback(t *testing.T) {
 
 func TestQualitySwitchDownPreservesPosition(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
-	model.currentQuality = deezer.AudioQuality320
+	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
 		ID:        "track-1",
 		Title:     "Song",
 		Artist:    "Artist",
-		Quality:   config.AudioQuality320,
+		Quality:   testQuality320,
 		CurrentMS: 45_000,
 		TotalMS:   120_000,
 	}
@@ -1356,7 +1410,7 @@ func TestQualitySwitchDownPreservesPosition(t *testing.T) {
 	}
 
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != deezer.AudioQuality128 {
+	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQuality128 {
 		t.Fatalf("expected switch to 128 kbps, got %#v", runtime.qualities)
 	}
 	if len(runtime.seeked) != 1 || runtime.seeked[0] != 45_000 {
@@ -1366,14 +1420,14 @@ func TestQualitySwitchDownPreservesPosition(t *testing.T) {
 
 func TestQualitySwitchToFlacRestartsAtBeginning(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
-	model.currentQuality = deezer.AudioQuality320
+	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
 		ID:        "track-1",
 		Title:     "Song",
 		Artist:    "Artist",
-		Quality:   config.AudioQuality320,
+		Quality:   testQuality320,
 		CurrentMS: 45_000,
 		TotalMS:   120_000,
 	}
@@ -1385,7 +1439,7 @@ func TestQualitySwitchToFlacRestartsAtBeginning(t *testing.T) {
 	}
 
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != deezer.AudioQualityFlac {
+	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQualityFlac {
 		t.Fatalf("expected switch to FLAC, got %#v", runtime.qualities)
 	}
 	if len(runtime.seeked) != 1 || runtime.seeked[0] != 0 {
@@ -1395,7 +1449,7 @@ func TestQualitySwitchToFlacRestartsAtBeginning(t *testing.T) {
 
 func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1442,7 +1496,7 @@ func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 
 func TestPlaybackFinishedAdvancesQueue(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1462,7 +1516,7 @@ func TestPlaybackFinishedAdvancesQueue(t *testing.T) {
 
 func TestPlaybackFinishedRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1489,7 +1543,7 @@ func TestPlaybackFinishedRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 
 func TestPlaybackFinishedWrapsQueueInRepeatAllMode(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1518,7 +1572,7 @@ func TestPlaybackFinishedLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 	loader := &fakeLoader{
 		flow: []app.Track{{ID: "3", Title: "Three", Artist: "C"}},
 	}
-	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1544,7 +1598,7 @@ func TestPlaybackFinishedLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 
 func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1580,7 +1634,7 @@ func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
 
 func TestCrossfadeProgressRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1609,7 +1663,7 @@ func TestCrossfadeProgressRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 
 func TestCrossfadeProgressWrapsQueueInRepeatAllMode(t *testing.T) {
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1641,7 +1695,7 @@ func TestCrossfadeProgressLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 		flow: []app.Track{{ID: "3", Title: "Three", Artist: "C"}},
 	}
 	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1671,7 +1725,7 @@ func TestCrossfadeProgressLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 }
 
 func TestCrossfadeProgressDoesNothingWhenDisabled(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.session = &fakePlaybackSession{}
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1695,7 +1749,7 @@ func TestCrossfadeProgressDoesNothingWhenDisabled(t *testing.T) {
 }
 
 func TestStartingNextTrackClearsStaleNowPlayingAndArtwork(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "Old Song", Artist: "A"},
 		{ID: "2", Title: "New Song", Artist: "B"},
@@ -2001,7 +2055,7 @@ func TestPlaybackDisablesAudioBandsWhenDisplayModeOff(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeOff
-	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), runtime)
 
 	cmd := model.startTrackPlayback("1")
 	if cmd == nil {
@@ -2021,7 +2075,7 @@ func TestPlaybackEnablesAudioBandsWhenDisplayModeOn(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeEqualizer
-	model := NewWithProviderAndRuntime(cfg, &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), runtime)
 
 	cmd := model.startTrackPlayback("1")
 	if cmd == nil {
@@ -2052,7 +2106,7 @@ func TestArtworkSlotDoesNotLeakCachedThemeBackground(t *testing.T) {
 
 func TestSelectingTrackInCurrentCollectionKeepsExistingQueue(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.ActivePanel = app.ActivePanelMain
 	model.app.CurrentTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
@@ -2084,7 +2138,7 @@ func TestSelectingTrackInCurrentCollectionKeepsExistingQueue(t *testing.T) {
 
 func TestPlaybackProgressPrebuffersNextQueuedTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 3
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2107,7 +2161,7 @@ func TestPlaybackProgressPrebuffersNextQueuedTrack(t *testing.T) {
 
 func TestHandleNextWrapsAtQueueEndWhenRepeatAllEnabled(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -2360,7 +2414,7 @@ func TestFlowLoadInvalidatesPendingSearch(t *testing.T) {
 
 func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 3
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2371,7 +2425,7 @@ func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
 	}
 	model.app.QueueIndex = intPtr(0)
 	model.app.NowPlaying = &app.NowPlaying{ID: "1", Title: "One", Artist: "A"}
-	model.setPrebufferStatus("2", deezer.AudioQuality320, PrebufferStatusReady)
+	model.setPrebufferStatus("2", testQuality320, PrebufferStatusReady)
 
 	nextModel, _ := model.Update(playbackProgressMsg{playID: 3, currentMS: 0, totalMS: 180000})
 	updated := nextModel.(Model)
@@ -2383,7 +2437,7 @@ func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
 
 func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 7
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2394,8 +2448,8 @@ func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
 
 	nextModel, _ := model.Update(playbackTrackChangedMsg{
 		playID:  7,
-		meta:    deezer.TrackMetadata{ID: "1", Title: "One", Artist: "A"},
-		quality: deezer.AudioQuality320,
+		info:    core.TrackInfo{ID: "1", Title: "One", Artist: "A"},
+		quality: testQuality320,
 	})
 	updated := nextModel.(Model)
 	status, ok := updated.prebufferStatus("1")
@@ -2411,7 +2465,7 @@ func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
 func TestReadyPrebufferStatusesEvictOldestWhenCacheLimitIsReached(t *testing.T) {
 	model := NewWithProvider(config.Default(), &fakeLoader{})
 	for i := 1; i <= prebufferCacheStatusLimit+1; i++ {
-		model.setPrebufferStatus(fmt.Sprintf("%d", i), deezer.AudioQuality320, PrebufferStatusReady)
+		model.setPrebufferStatus(fmt.Sprintf("%d", i), testQuality320, PrebufferStatusReady)
 	}
 	if _, ok := model.prebufferStatus("1"); ok {
 		t.Fatal("expected oldest ready status to be evicted")
@@ -2423,7 +2477,7 @@ func TestReadyPrebufferStatusesEvictOldestWhenCacheLimitIsReached(t *testing.T) 
 
 func TestCollectionLoadPrebuffersFirstTwentyQueuedTracks(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	tracks := make([]app.Track, 25)
 	want := make([]string, 20)
 	for i := range tracks {
@@ -2446,7 +2500,7 @@ func TestCollectionLoadPrebuffersFirstTwentyQueuedTracks(t *testing.T) {
 
 func TestLastFlowTrackStartsLoadingNextBatchForPrebuffer(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 2
 	model.app.QueueTracks = []app.Track{
@@ -2469,7 +2523,7 @@ func TestLastFlowTrackStartsLoadingNextBatchForPrebuffer(t *testing.T) {
 
 func TestStartingLastFlowTrackLoadsNextBatchImmediately(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 2
 	model.app.QueueTracks = []app.Track{
@@ -2489,7 +2543,7 @@ func TestStartingLastFlowTrackLoadsNextBatchImmediately(t *testing.T) {
 
 func TestAppendedFlowBatchPrebuffersFirstNewTrack(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.IsPlaying = true
 	model.app.IsFlowQueue = true
 	model.app.FlowLoadingMore = true
@@ -2522,7 +2576,7 @@ func TestAppendedFlowBatchPrebuffersFirstNewTrack(t *testing.T) {
 
 func TestPlaybackProgressClearsPrebufferAtQueueEnd(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 4
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2539,10 +2593,10 @@ func TestPlaybackProgressClearsPrebufferAtQueueEnd(t *testing.T) {
 
 func TestPlaybackErrorStopsPlayback(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 1
 	model.currentTrackID = "track-1"
-	model.currentQuality = deezer.AudioQuality320
+	model.currentQuality = testQuality320
 	model.app.IsPlaying = true
 
 	nextModel, cmd := model.Update(playbackFinishedMsg{playID: 1, err: errors.New("boom")})
@@ -2563,17 +2617,17 @@ func TestPlaybackErrorStopsPlayback(t *testing.T) {
 	if len(runtime.started) != 1 || runtime.started[0] != "track-1" {
 		t.Fatalf("expected same track to be reloaded, got %#v", runtime.started)
 	}
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != deezer.AudioQuality320 {
+	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQuality320 {
 		t.Fatalf("expected first retry to keep quality, got %#v", runtime.qualities)
 	}
 }
 
 func TestPlaybackRetryReducesQualityAfterReloadFails(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 2
 	model.currentTrackID = "track-2"
-	model.currentQuality = deezer.AudioQualityFlac
+	model.currentQuality = testQualityFlac
 	model.playbackRetries = 1
 	model.app.IsPlaying = true
 
@@ -2586,19 +2640,19 @@ func TestPlaybackRetryReducesQualityAfterReloadFails(t *testing.T) {
 	msg := firstBatchMessage(cmd)
 	nextModel, _ = updated.Update(msg)
 	updated = nextModel.(Model)
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != deezer.AudioQuality320 {
+	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQuality320 {
 		t.Fatalf("expected retry to downgrade to 320 kbps, got %#v", runtime.qualities)
 	}
-	if updated.currentQuality != deezer.AudioQuality320 {
-		t.Fatalf("expected model quality to track downgrade, got %s", updated.currentQuality)
+	if updated.currentQuality != testQuality320 {
+		t.Fatalf("expected model quality to track downgrade, got %+v", updated.currentQuality)
 	}
 }
 
 func TestPlaybackRetryStopsAtLowestQuality(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.currentPlayID = 3
 	model.currentTrackID = "track-3"
-	model.currentQuality = deezer.AudioQuality128
+	model.currentQuality = testQuality128
 	model.playbackRetries = 1
 	model.app.IsPlaying = true
 
@@ -2613,7 +2667,7 @@ func TestPlaybackRetryStopsAtLowestQuality(t *testing.T) {
 }
 
 func TestCanceledPlaybackCompletionIsIgnored(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
 
@@ -2634,7 +2688,7 @@ func TestEnterOnSearchPlaylistLoadsPlaylist(t *testing.T) {
 		},
 		playlist: []app.Track{{ID: "11", Title: "Track", Artist: "Artist"}},
 	}
-	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
 	model.width = 120
 	model.height = 40
 	model.app.ShowingSearchResult = true
@@ -2739,7 +2793,7 @@ func TestSearchTrackResultsUseAvailablePanelWidth(t *testing.T) {
 
 func TestEnterOnSearchTrackQueuesAllSearchTracksAtSelectedIndex(t *testing.T) {
 	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), &fakeLoader{}, runtime)
+	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryTracks
 	model.app.CurrentTracks = []app.Track{
@@ -2775,7 +2829,7 @@ func TestEnterOnSearchArtistStartsSearch(t *testing.T) {
 			Tracks: []app.Track{{ID: "99", Title: "Artist Track", Artist: "Aster Lane"}},
 		},
 	}
-	model := NewWithProviderAndRuntime(config.Default(), loader, &fakePlaybackRuntime{})
+	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
 	model.width = 120
 	model.height = 40
 	model.app.ShowingSearchResult = true
@@ -2818,7 +2872,7 @@ func TestBootstrapFailureRecovery(t *testing.T) {
 		err   error
 		login bool
 	}{
-		{"rejected session", fmt.Errorf("session: %w", deezer.ErrUnauthenticated), true},
+		{"rejected session", fmt.Errorf("session: %w", fmt.Errorf("fake %w", provider.ErrUnauthenticated)), true},
 		{"network failure", errors.New("connection timed out"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/faiface/beep/flac"
 	"github.com/faiface/beep/mp3"
 	"github.com/faiface/beep/speaker"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/core"
 )
 
 const (
@@ -39,16 +39,16 @@ func NewBeepBackend() *BeepBackend {
 	}
 }
 
-func (b *BeepBackend) Start(stream io.ReadSeeker, quality deezer.AudioQuality, handler EventHandler, onFinished func(error)) (Controller, error) {
-	return b.StartAt(stream, quality, 0, handler, onFinished)
+func (b *BeepBackend) Start(stream io.ReadSeeker, audioFormat core.AudioFormat, handler EventHandler, onFinished func(error)) (Controller, error) {
+	return b.StartAt(stream, audioFormat, 0, handler, onFinished)
 }
 
-func (b *BeepBackend) StartAt(stream io.ReadSeeker, quality deezer.AudioQuality, initialMS uint64, handler EventHandler, onFinished func(error)) (Controller, error) {
+func (b *BeepBackend) StartAt(stream io.ReadSeeker, audioFormat core.AudioFormat, initialMS uint64, handler EventHandler, onFinished func(error)) (Controller, error) {
 	if err := b.ensureSpeaker(); err != nil {
 		return nil, err
 	}
 
-	streamer, format, err := decodeStream(stream, quality)
+	streamer, format, err := decodeStream(stream, audioFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -209,23 +209,23 @@ func (c *beepController) finish(natural bool) {
 	}
 }
 
-func decodeStream(stream io.ReadSeeker, quality deezer.AudioQuality) (beep.StreamSeekCloser, beep.Format, error) {
+func decodeStream(stream io.ReadSeeker, audioFormat core.AudioFormat) (beep.StreamSeekCloser, beep.Format, error) {
 	wrapped := readSeekCloser{ReadSeeker: stream}
-	switch quality {
-	case deezer.AudioQualityFlac:
+	switch audioFormat {
+	case core.FormatFLAC:
 		streamer, format, err := flac.Decode(wrapped)
 		if err != nil {
 			return nil, beep.Format{}, fmt.Errorf("decode FLAC stream: %w", err)
 		}
 		return streamer, format, nil
-	case deezer.AudioQuality128, deezer.AudioQuality320:
+	case core.FormatMP3:
 		streamer, format, err := mp3.Decode(wrapped)
 		if err != nil {
 			return nil, beep.Format{}, fmt.Errorf("decode MP3 stream: %w", err)
 		}
 		return streamer, format, nil
 	default:
-		return nil, beep.Format{}, fmt.Errorf("unsupported audio quality %q", quality)
+		return nil, beep.Format{}, fmt.Errorf("unsupported audio format %q", audioFormat)
 	}
 }
 

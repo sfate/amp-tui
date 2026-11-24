@@ -6,21 +6,22 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/core"
 )
 
 func TestDarwinPrebufferTakeKeepsCachedTrackReusable(t *testing.T) {
 	store := newDarwinPrebufferStore()
-	key := darwinPrebufferKey("1", deezer.AudioQuality320)
+	key := darwinPrebufferKey("1", testQuality320)
 	store.current[key] = &darwinPreparedTrack{
 		TrackID: "1",
-		Quality: deezer.AudioQuality320,
-		Meta:    deezer.TrackMetadata{ID: "1", Title: "One", Artist: "A"},
+		Quality: testQuality320,
+		Info:    core.TrackInfo{ID: "1", Title: "One", Artist: "A"},
+		Format:  core.FormatMP3,
 		File:    "/tmp/amp-tui-test.mp3",
 	}
 	store.order = []string{key}
 
-	prepared, err := store.TakeOrPrepare(context.Background(), nil, "1", deezer.AudioQuality320, nil)
+	prepared, err := store.TakeOrPrepare(context.Background(), nil, "1", testQuality320, nil)
 	if err != nil {
 		t.Fatalf("take cached track: %v", err)
 	}
@@ -34,17 +35,18 @@ func TestDarwinPrebufferTakeKeepsCachedTrackReusable(t *testing.T) {
 
 func TestDarwinPrebufferEmptyWindowKeepsCachedTracks(t *testing.T) {
 	store := newDarwinPrebufferStore()
-	key := darwinPrebufferKey("1", deezer.AudioQuality320)
+	key := darwinPrebufferKey("1", testQuality320)
 	store.current[key] = &darwinPreparedTrack{
 		TrackID: "1",
-		Quality: deezer.AudioQuality320,
-		Meta:    deezer.TrackMetadata{ID: "1", Title: "One", Artist: "A"},
+		Quality: testQuality320,
+		Info:    core.TrackInfo{ID: "1", Title: "One", Artist: "A"},
+		Format:  core.FormatMP3,
 		File:    "/tmp/amp-tui-test.mp3",
 		Cached:  true,
 	}
 	store.order = []string{key}
 
-	store.Prebuffer(context.Background(), nil, nil, deezer.AudioQuality320, nil)
+	store.Prebuffer(context.Background(), nil, nil, testQuality320, nil)
 	if _, ok := store.current[key]; !ok {
 		t.Fatal("expected cached track to survive empty prebuffer window")
 	}

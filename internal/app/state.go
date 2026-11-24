@@ -105,7 +105,7 @@ type NowPlaying struct {
 	ID          string
 	Title       string
 	Artist      string
-	Quality     config.AudioQuality
+	Quality     core.Quality
 	CurrentMS   uint64
 	TotalMS     uint64
 	AlbumArtURL *string

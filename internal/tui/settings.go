@@ -5,6 +5,7 @@ import (
 
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/core"
 )
 
 func (m *Model) adjustSelectedSetting(direction int) {
@@ -17,8 +18,9 @@ func (m *Model) adjustSelectedSetting(direction int) {
 	case 1:
 		m.adjustVolume(direction * 5)
 	case 2:
-		m.app.Config.DefaultQuality = nextQuality(m.app.Config.DefaultQuality, direction)
-		m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(m.app.Config.DefaultQuality))
+		next := m.stepQuality(m.configuredQuality(), direction, true)
+		m.app.Config.DefaultQuality = next.ID
+		m.app.StatusMessage = fmt.Sprintf("Quality: %s", qualityLabel(next))
 		m.persistConfig()
 	case 3:
 		m.app.Config.CrossfadeEnabled = !m.app.Config.CrossfadeEnabled
@@ -57,32 +59,11 @@ func (m *Model) writeConfig() error {
 	return m.saveConfig(m.app.Config)
 }
 
-func qualityLabel(q config.AudioQuality) string {
-	switch q {
-	case config.AudioQuality128:
-		return "128 kbps"
-	case config.AudioQualityFlac:
-		return "FLAC"
-	default:
-		return "320 kbps"
+func qualityLabel(q core.Quality) string {
+	if q.Label == "" {
+		return "-"
 	}
-}
-
-func nextQuality(current config.AudioQuality, direction int) config.AudioQuality {
-	qualities := []config.AudioQuality{config.AudioQuality128, config.AudioQuality320, config.AudioQualityFlac}
-	idx := 1
-	for i, quality := range qualities {
-		if quality == current {
-			idx = i
-			break
-		}
-	}
-	if direction < 0 {
-		idx = (idx - 1 + len(qualities)) % len(qualities)
-	} else {
-		idx = (idx + 1) % len(qualities)
-	}
-	return qualities[idx]
+	return q.Label
 }
 
 func nextCrossfadeDuration(current uint64, direction int) uint64 {
@@ -160,7 +141,7 @@ func (m Model) renderSettingsRows() []string {
 	}{
 		{label: "Theme", value: colorscheme.Label(m.app.Config.Theme), color: activePalette.Blue},
 		{label: "Volume", value: fmt.Sprintf("%d%%", m.app.Volume), color: activePalette.Aqua},
-		{label: "Quality", value: qualityLabel(m.app.Config.DefaultQuality), color: activePalette.Purple},
+		{label: "Quality", value: qualityLabel(m.configuredQuality()), color: activePalette.Purple},
 		{label: "Crossfade", value: onOff(m.app.Config.CrossfadeEnabled), color: activePalette.Orange},
 		{label: "Duration", value: fmt.Sprintf("%dms", m.app.Config.CrossfadeDurationMS), color: activePalette.Yellow},
 		{label: "Display", value: displayModeLabel(m.app.Config.DisplayMode), color: activePalette.Aqua},

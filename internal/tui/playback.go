@@ -5,9 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/sfate/amp-tui/internal/core"
 	"github.com/sfate/amp-tui/internal/player"
-	"github.com/sfate/amp-tui/internal/provider"
-	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type PlaybackSession interface {
@@ -19,7 +18,7 @@ type PlaybackSession interface {
 }
 
 type PlayerRuntime interface {
-	Start(trackID string, quality deezer.AudioQuality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error)
+	Start(trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error)
 }
 
 type ShutdownRuntime interface {
@@ -37,7 +36,7 @@ const (
 
 type PrebufferingRuntime interface {
 	PlayerRuntime
-	Prebuffer(trackIDs []string, quality deezer.AudioQuality, events chan<- tea.Msg)
+	Prebuffer(trackIDs []string, quality core.Quality, events chan<- tea.Msg)
 }
 
 type MediaControlCommandKind int
@@ -82,10 +81,4 @@ type MediaControlRuntime interface {
 
 type fadeStoppingSession interface {
 	FadeOutStop(duration time.Duration)
-}
-
-// playbackCapableProvider bridges playback to the Deezer client until playback moves behind the provider.
-type playbackCapableProvider interface {
-	provider.Provider
-	DeezerClient() *deezer.Client
 }
