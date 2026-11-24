@@ -11,6 +11,7 @@ import (
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/secrets"
 )
@@ -39,8 +40,9 @@ type Model struct {
 	// notice is a one-time message shown again when the first section loads.
 	notice string
 
-	runtime         PlayerRuntime
-	session         PlaybackSession
+	engine          playback.Engine
+	runtime         *playerRuntime
+	session         playback.Session
 	playbackEvents  chan tea.Msg
 	nextPlaybackID  int
 	currentPlayID   int
@@ -88,6 +90,7 @@ func NewWithConfig(cfg config.Config, opts ...Option) Model {
 func newWithConfig(cfg config.Config, loadErr error, o options) Model {
 	cfg = normalizeConfig(cfg)
 	model := newModel(app.New(cfg), nil, nil)
+	model.engine = o.engine
 	model.registry = o.registry
 	model.secrets = o.secrets
 	model.configLoadErr = loadErr
@@ -123,9 +126,10 @@ func NewWithProvider(cfg config.Config, p provider.Provider) Model {
 	return model
 }
 
-func NewWithProviderAndRuntime(cfg config.Config, p provider.Provider, runtime PlayerRuntime) Model {
+func NewWithProviderAndEngine(cfg config.Config, p provider.Provider, engine playback.Engine) Model {
 	model := NewWithProvider(cfg, p)
-	model.runtime = runtime
+	model.engine = engine
+	model.runtime = newPlayerRuntime(engine, p)
 	return model
 }
 
@@ -141,7 +145,6 @@ func normalizeConfig(cfg config.Config) config.Config {
 func newModel(state *app.App, p provider.Provider, factory provider.Factory) Model {
 	model := Model{
 		app:            state,
-		runtime:        newPlayerRuntime(p),
 		playbackEvents: make(chan tea.Msg, 32),
 		factory:        factory,
 		saveConfig:     config.Save,

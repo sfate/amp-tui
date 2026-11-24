@@ -18,7 +18,8 @@ import (
 	"github.com/sfate/amp-tui/internal/colorscheme"
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/core"
-	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/playback"
+	"github.com/sfate/amp-tui/internal/playback/playbacktest"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/secrets"
 )
@@ -116,8 +117,8 @@ func (f *fakeStreamLoader) DefaultQuality() core.Quality {
 	return f.ladder[len(f.ladder)/2]
 }
 
-func (f *fakeStreamLoader) Resolve(context.Context, string, core.Quality) (provider.Source, error) {
-	return provider.Source{}, errors.New("fake provider does not stream")
+func (f *fakeStreamLoader) Resolve(_ context.Context, trackID string, quality core.Quality) (provider.Source, error) {
+	return provider.Source{Info: core.TrackInfo{ID: trackID}, Quality: quality}, nil
 }
 
 // registryProvider stands in for the signed-out Deezer provider in registry tests.
@@ -176,66 +177,76 @@ func firstNonTickMsg(cmd tea.Cmd) tea.Msg {
 	return nil
 }
 
-type fakePlaybackRuntime struct {
-	started     []string
-	qualities   []core.Quality
-	seeked      []uint64
-	handlers    []player.EventHandler
+// fakeEngine adds prebuffer and media control to the playbacktest fake, like the native engine on macOS.
+type fakeEngine struct {
+	playbacktest.Engine
 	prebuffered [][]string
-	session     *fakePlaybackSession
-	startErr    error
-	mediaEvents chan MediaControlCommand
-	mediaStates []MediaControlState
+	cleared     int
+	mediaEvents chan playback.MediaCommand
+	mediaStates []playback.MediaState
 }
 
-func (f *fakePlaybackRuntime) Start(trackID string, quality core.Quality, seekMS uint64, handler player.EventHandler) (PlaybackSession, error) {
-	f.started = append(f.started, trackID)
-	f.qualities = append(f.qualities, quality)
-	f.seeked = append(f.seeked, seekMS)
-	f.handlers = append(f.handlers, handler)
-	if f.startErr != nil {
-		return nil, f.startErr
-	}
-	f.session = &fakePlaybackSession{}
-	return f.session, nil
+func newFakeEngine() *fakeEngine {
+	return &fakeEngine{Engine: playbacktest.Engine{Caps: playback.EngineCaps{Visualizer: true}}}
 }
 
-func (f *fakePlaybackRuntime) Prebuffer(trackIDs []string, _ core.Quality, events chan<- tea.Msg) {
-	f.prebuffered = append(f.prebuffered, append([]string(nil), trackIDs...))
-	if events == nil {
-		return
+func (f *fakeEngine) started() []string {
+	var ids []string
+	for _, call := range f.Starts() {
+		ids = append(ids, call.Source.Info.ID)
 	}
-	for _, trackID := range trackIDs {
-		events <- prebufferStatusMsg{trackID: trackID, quality: testQuality320, status: PrebufferStatusLoading}
+	return ids
+}
+
+func (f *fakeEngine) qualities() []core.Quality {
+	var qualities []core.Quality
+	for _, call := range f.Starts() {
+		qualities = append(qualities, call.Source.Quality)
+	}
+	return qualities
+}
+
+func (f *fakeEngine) seeked() []uint64 {
+	var offsets []uint64
+	for _, call := range f.Starts() {
+		offsets = append(offsets, call.Opts.StartMS)
+	}
+	return offsets
+}
+
+func (f *fakeEngine) handlers() []playback.EventHandler {
+	var handlers []playback.EventHandler
+	for _, call := range f.Starts() {
+		handlers = append(handlers, call.Handler)
+	}
+	return handlers
+}
+
+func (f *fakeEngine) Prebuffer(tracks []playback.Track, onStatus func(playback.Track, playback.PrebufferStatus)) {
+	ids := []string{}
+	for _, track := range tracks {
+		ids = append(ids, track.ID)
+	}
+	f.prebuffered = append(f.prebuffered, ids)
+	for _, track := range tracks {
+		onStatus(track, playback.PrebufferLoading)
 	}
 }
 
-func (f *fakePlaybackRuntime) MediaControlEvents() <-chan MediaControlCommand {
+func (f *fakeEngine) ClearPrebuffer() { f.cleared++ }
+
+func (f *fakeEngine) MediaCommands() <-chan playback.MediaCommand {
 	return f.mediaEvents
 }
 
-func (f *fakePlaybackRuntime) UpdateMediaControl(state MediaControlState) {
+func (f *fakeEngine) UpdateMediaState(state playback.MediaState) {
 	f.mediaStates = append(f.mediaStates, state)
 }
 
-type fakePlaybackSession struct {
-	paused  bool
-	resumed bool
-	stopped bool
-	waitErr error
-	volume  float32
-	faded   chan time.Duration
-}
-
-func (f *fakePlaybackSession) Pause()              { f.paused = true }
-func (f *fakePlaybackSession) Resume()             { f.resumed = true }
-func (f *fakePlaybackSession) Stop()               { f.stopped = true }
-func (f *fakePlaybackSession) Wait() error         { return f.waitErr }
-func (f *fakePlaybackSession) SetVolume(v float32) { f.volume = v }
-func (f *fakePlaybackSession) FadeOutStop(d time.Duration) {
-	if f.faded != nil {
-		f.faded <- d
-	}
+func fadingSession() *playbacktest.Session {
+	session := playbacktest.NewSession()
+	session.Faded = make(chan time.Duration, 1)
+	return session
 }
 
 func firstBatchMessage(cmd tea.Cmd) tea.Msg {
@@ -331,7 +342,7 @@ func TestLoginInputValidatesSavesAndBootstraps(t *testing.T) {
 }
 
 func TestOpenLoginShortcutEntersLoginModeWithExistingSession(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.ready = true
 
 	nextModel, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "O"}))
@@ -697,8 +708,8 @@ func TestCollectionTracksScrollUnderFixedHeader(t *testing.T) {
 func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 	cfg := config.Default()
 	cfg.SetProviderSettings("fake", config.ProviderSettings{DefaultQuality: testQuality320.ID})
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(cfg, withStream(&fakeLoader{}), runtime)
 	var saved []config.Config
 	model.saveConfig = func(cfg config.Config) error {
 		saved = append(saved, cfg)
@@ -723,8 +734,8 @@ func TestSettingsQualityPersistsAndAffectsPlayback(t *testing.T) {
 	}
 	nextModel, _ = updated.Update(cmd())
 	_ = nextModel.(Model)
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQualityFlac {
-		t.Fatalf("expected playback to use FLAC quality, got %#v", runtime.qualities)
+	if len(runtime.qualities()) != 1 || runtime.qualities()[0] != testQualityFlac {
+		t.Fatalf("expected playback to use FLAC quality, got %#v", runtime.qualities())
 	}
 }
 
@@ -835,8 +846,8 @@ func TestEscWhileSearchingFocusesLibrary(t *testing.T) {
 }
 
 func TestSettingsVolumeTakesEffectOnActiveSession(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
-	session := &fakePlaybackSession{}
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
+	session := playbacktest.NewSession()
 	model.session = session
 	model.app.Volume = 50
 	model.app.ViewingSettings = true
@@ -848,14 +859,14 @@ func TestSettingsVolumeTakesEffectOnActiveSession(t *testing.T) {
 	if updated.app.Volume != 55 {
 		t.Fatalf("expected volume to increase, got %d", updated.app.Volume)
 	}
-	if session.volume != 0.55 {
-		t.Fatalf("expected active session volume to update, got %f", session.volume)
+	if session.Volume() != 0.55 {
+		t.Fatalf("expected active session volume to update, got %f", session.Volume())
 	}
 }
 
 func TestCrossfadeSettingUsesFadeStopWhenReplacingSession(t *testing.T) {
-	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	session := fadingSession()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.session = session
 	model.app.Config.CrossfadeEnabled = true
 	model.app.Config.CrossfadeDurationMS = 3000
@@ -863,21 +874,21 @@ func TestCrossfadeSettingUsesFadeStopWhenReplacingSession(t *testing.T) {
 	model.stopCurrentSession()
 
 	select {
-	case got := <-session.faded:
+	case got := <-session.Faded:
 		if got != 3*time.Second {
 			t.Fatalf("expected 3s fade, got %s", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected fade stop to be used")
 	}
-	if session.stopped {
+	if session.Stopped() {
 		t.Fatal("did not expect immediate stop when fade stop is available")
 	}
 }
 
 func TestSpacebarStartsSelectedTrack(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.width = 120
 	model.height = 40
 	model.app.ActivePanel = app.ActivePanelMain
@@ -894,8 +905,8 @@ func TestSpacebarStartsSelectedTrack(t *testing.T) {
 
 	nextModel, _ = updated.Update(cmd())
 	updated = nextModel.(Model)
-	if len(runtime.started) != 1 || runtime.started[0] != "1" {
-		t.Fatalf("unexpected playback start %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "1" {
+		t.Fatalf("unexpected playback start %#v", runtime.started())
 	}
 	if !updated.app.IsPlaying {
 		t.Fatal("expected playback state to start")
@@ -903,8 +914,8 @@ func TestSpacebarStartsSelectedTrack(t *testing.T) {
 }
 
 func TestPlaybackStartHonorsPendingPause(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
-	session := &fakePlaybackSession{}
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
+	session := playbacktest.NewSession()
 	model.nextPlaybackID = 1
 	model.pauseRequested = true
 
@@ -913,7 +924,7 @@ func TestPlaybackStartHonorsPendingPause(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected follow-up playback wait/listen commands")
 	}
-	if !session.paused {
+	if !session.Paused() {
 		t.Fatal("expected session to be paused immediately")
 	}
 	if updated.app.IsPlaying {
@@ -933,7 +944,7 @@ func TestBufferingProgressShowsPercentageAndStage(t *testing.T) {
 	model := NewWithProvider(config.Default(), &fakeLoader{})
 	model.currentPlayID = 7
 
-	nextModel, _ := model.Update(bufferingProgressMsg{playID: 7, percent: 42, stage: player.BufferingStageDownloading})
+	nextModel, _ := model.Update(bufferingProgressMsg{playID: 7, percent: 42, stage: playback.BufferingStageDownloading})
 	updated := nextModel.(Model)
 	if got := updated.displayState(); got != "Buffering 42% - Downloading..." {
 		t.Fatalf("expected buffering percentage and stage, got %q", got)
@@ -1133,8 +1144,8 @@ func TestEnterOnFlowLoadsQueueAndMarksFlow(t *testing.T) {
 			{ID: "202", Title: "Night Transit", Artist: "Aster Lane"},
 		},
 	}
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(loader), runtime)
 	model.width = 120
 	model.height = 40
 	model.app.NavState.Select(intPtr(1))
@@ -1170,38 +1181,38 @@ func TestEnterOnFlowLoadsQueueAndMarksFlow(t *testing.T) {
 	if len(updated.app.QueueTracks) != len(loader.flow) {
 		t.Fatalf("unexpected queue length %d", len(updated.app.QueueTracks))
 	}
-	if len(runtime.started) != 1 || runtime.started[0] != "201" {
-		t.Fatalf("unexpected playback start %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "201" {
+		t.Fatalf("unexpected playback start %#v", runtime.started())
 	}
 }
 
 func TestTogglePlayPauseControlsSession(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
-	session := &fakePlaybackSession{}
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
+	session := playbacktest.NewSession()
 	model.session = session
 	model.app.IsPlaying = true
 
 	model.togglePlayPause()
-	if !session.paused || model.app.IsPlaying {
+	if !session.Paused() || model.app.IsPlaying {
 		t.Fatal("expected pause to be forwarded")
 	}
 
 	model.togglePlayPause()
-	if !session.resumed || !model.app.IsPlaying {
+	if !session.Resumed() || !model.app.IsPlaying {
 		t.Fatal("expected resume to be forwarded")
 	}
 }
 
 func TestMediaControlToggleControlsSession(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
-	session := &fakePlaybackSession{}
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
+	session := playbacktest.NewSession()
 	model.session = session
 	model.app.IsPlaying = true
 
-	nextModel, _ := model.Update(mediaControlCommandMsg{command: MediaControlCommand{Kind: MediaControlToggle}})
+	nextModel, _ := model.Update(mediaControlCommandMsg{command: playback.MediaCommand{Kind: playback.MediaToggle}})
 	updated := nextModel.(Model)
-	if !session.paused || updated.app.IsPlaying {
+	if !session.Paused() || updated.app.IsPlaying {
 		t.Fatal("expected media toggle to pause active playback")
 	}
 	if len(runtime.mediaStates) == 0 || runtime.mediaStates[len(runtime.mediaStates)-1].Playing {
@@ -1210,8 +1221,8 @@ func TestMediaControlToggleControlsSession(t *testing.T) {
 }
 
 func TestMediaControlSetPositionSeeksCurrentTrack(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1223,21 +1234,21 @@ func TestMediaControlSetPositionSeeksCurrentTrack(t *testing.T) {
 		TotalMS:   120_000,
 	}
 
-	nextModel, cmd := model.Update(mediaControlCommandMsg{command: MediaControlCommand{Kind: MediaControlSetPosition, PositionMS: 55_000}})
+	nextModel, cmd := model.Update(mediaControlCommandMsg{command: playback.MediaCommand{Kind: playback.MediaSetPosition, PositionMS: 55_000}})
 	updated := nextModel.(Model)
 	if cmd == nil {
 		t.Fatal("expected media set-position command")
 	}
 
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.seeked) != 1 || runtime.seeked[0] != 55_000 {
-		t.Fatalf("expected media set-position to seek to 55s, got %#v", runtime.seeked)
+	if len(runtime.seeked()) != 1 || runtime.seeked()[0] != 55_000 {
+		t.Fatalf("expected media set-position to seek to 55s, got %#v", runtime.seeked())
 	}
 }
 
 func TestPlaybackTrackChangedSyncsMediaControlMetadata(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
 	durationSecs := uint64(180)
@@ -1264,7 +1275,7 @@ func TestPlaybackTrackChangedSyncsMediaControlMetadata(t *testing.T) {
 }
 
 func TestRememberArtworkEvictsOldEntries(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), nil, nil)
+	model := NewWithProviderAndEngine(config.Default(), nil, nil)
 	for i := 0; i < artworkCacheLimit+5; i++ {
 		url := fmt.Sprintf("https://example.invalid/art-%02d.jpg", i)
 		model.rememberArtwork(url, fmt.Sprintf("art-%02d", i))
@@ -1305,8 +1316,8 @@ func TestRepeatKeyCyclesRepeatMode(t *testing.T) {
 }
 
 func TestSeekForwardRestartsCurrentTrackAtNewPosition(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1325,17 +1336,17 @@ func TestSeekForwardRestartsCurrentTrackAtNewPosition(t *testing.T) {
 	}
 
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.started) != 1 || runtime.started[0] != "track-1" {
-		t.Fatalf("expected current track to restart, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "track-1" {
+		t.Fatalf("expected current track to restart, got %#v", runtime.started())
 	}
-	if len(runtime.seeked) != 1 || runtime.seeked[0] != 40_000 {
-		t.Fatalf("expected seek to 40s, got %#v", runtime.seeked)
+	if len(runtime.seeked()) != 1 || runtime.seeked()[0] != 40_000 {
+		t.Fatalf("expected seek to 40s, got %#v", runtime.seeked())
 	}
 }
 
 func TestSeekBackwardClampsToStart(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1354,13 +1365,13 @@ func TestSeekBackwardClampsToStart(t *testing.T) {
 	}
 
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.seeked) != 1 || runtime.seeked[0] != 0 {
-		t.Fatalf("expected seek to clamp to start, got %#v", runtime.seeked)
+	if len(runtime.seeked()) != 1 || runtime.seeked()[0] != 0 {
+		t.Fatalf("expected seek to clamp to start, got %#v", runtime.seeked())
 	}
 }
 
 func TestSeekIsIgnoredForFlacPlayback(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.currentTrackID = "track-1"
 	model.currentQuality = testQualityFlac
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1383,8 +1394,8 @@ func TestSeekIsIgnoredForFlacPlayback(t *testing.T) {
 }
 
 func TestQualitySwitchDownPreservesPosition(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1403,17 +1414,17 @@ func TestQualitySwitchDownPreservesPosition(t *testing.T) {
 	}
 
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQuality128 {
-		t.Fatalf("expected switch to 128 kbps, got %#v", runtime.qualities)
+	if len(runtime.qualities()) != 1 || runtime.qualities()[0] != testQuality128 {
+		t.Fatalf("expected switch to 128 kbps, got %#v", runtime.qualities())
 	}
-	if len(runtime.seeked) != 1 || runtime.seeked[0] != 45_000 {
-		t.Fatalf("expected quality switch to preserve position, got %#v", runtime.seeked)
+	if len(runtime.seeked()) != 1 || runtime.seeked()[0] != 45_000 {
+		t.Fatalf("expected quality switch to preserve position, got %#v", runtime.seeked())
 	}
 }
 
 func TestQualitySwitchToFlacRestartsAtBeginning(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentTrackID = "track-1"
 	model.currentQuality = testQuality320
 	model.app.NowPlaying = &app.NowPlaying{
@@ -1432,17 +1443,17 @@ func TestQualitySwitchToFlacRestartsAtBeginning(t *testing.T) {
 	}
 
 	_, _ = updated.Update(firstBatchMessage(cmd))
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQualityFlac {
-		t.Fatalf("expected switch to FLAC, got %#v", runtime.qualities)
+	if len(runtime.qualities()) != 1 || runtime.qualities()[0] != testQualityFlac {
+		t.Fatalf("expected switch to FLAC, got %#v", runtime.qualities())
 	}
-	if len(runtime.seeked) != 1 || runtime.seeked[0] != 0 {
-		t.Fatalf("expected FLAC switch to restart from beginning, got %#v", runtime.seeked)
+	if len(runtime.seeked()) != 1 || runtime.seeked()[0] != 0 {
+		t.Fatalf("expected FLAC switch to restart from beginning, got %#v", runtime.seeked())
 	}
 }
 
 func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1466,8 +1477,8 @@ func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 	if updated.app.QueueIndex == nil || *updated.app.QueueIndex != 3 {
 		t.Fatalf("expected queue index to advance to latest requested track, got %#v", updated.app.QueueIndex)
 	}
-	if len(runtime.started) != 0 {
-		t.Fatalf("did not expect intermediate tracks to start, got %#v", runtime.started)
+	if len(runtime.started()) != 0 {
+		t.Fatalf("did not expect intermediate tracks to start, got %#v", runtime.started())
 	}
 
 	nextModel, staleCmd := updated.Update(scheduledPlaybackMsg{requestID: firstRequest})
@@ -1482,14 +1493,14 @@ func TestRepeatedNextStartsOnlyLatestRequestedTrack(t *testing.T) {
 		t.Fatal("expected latest scheduled playback to start")
 	}
 	_, _ = updated.Update(firstBatchMessage(startCmd))
-	if len(runtime.started) != 1 || runtime.started[0] != "4" {
-		t.Fatalf("expected only latest requested track to start, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "4" {
+		t.Fatalf("expected only latest requested track to start, got %#v", runtime.started())
 	}
 }
 
 func TestPlaybackFinishedAdvancesQueue(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1508,8 +1519,8 @@ func TestPlaybackFinishedAdvancesQueue(t *testing.T) {
 }
 
 func TestPlaybackFinishedRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1529,14 +1540,14 @@ func TestPlaybackFinishedRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 
 	nextModel, _ = updated.Update(firstBatchMessage(cmd))
 	updated = nextModel.(Model)
-	if len(runtime.started) != 1 || runtime.started[0] != "2" {
-		t.Fatalf("expected current track to restart, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "2" {
+		t.Fatalf("expected current track to restart, got %#v", runtime.started())
 	}
 }
 
 func TestPlaybackFinishedWrapsQueueInRepeatAllMode(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1556,8 +1567,8 @@ func TestPlaybackFinishedWrapsQueueInRepeatAllMode(t *testing.T) {
 
 	nextModel, _ = updated.Update(firstBatchMessage(cmd))
 	updated = nextModel.(Model)
-	if len(runtime.started) != 1 || runtime.started[0] != "1" {
-		t.Fatalf("expected first track to start after wrap, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "1" {
+		t.Fatalf("expected first track to start after wrap, got %#v", runtime.started())
 	}
 }
 
@@ -1565,7 +1576,7 @@ func TestPlaybackFinishedLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 	loader := &fakeLoader{
 		flow: []app.Track{{ID: "3", Title: "Three", Artist: "C"}},
 	}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(loader), newFakeEngine())
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -1590,8 +1601,8 @@ func TestPlaybackFinishedLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 }
 
 func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
-	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	session := fadingSession()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1616,7 +1627,7 @@ func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
 		t.Fatal("expected automatic transition to be armed")
 	}
 	select {
-	case got := <-session.faded:
+	case got := <-session.Faded:
 		if got != 5*time.Second {
 			t.Fatalf("expected 5s fade, got %s", got)
 		}
@@ -1626,8 +1637,8 @@ func TestCrossfadeProgressStartsNextTrackAndFadesCurrentSession(t *testing.T) {
 }
 
 func TestCrossfadeProgressRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
-	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	session := fadingSession()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1655,8 +1666,8 @@ func TestCrossfadeProgressRepeatsCurrentTrackInRepeatOneMode(t *testing.T) {
 }
 
 func TestCrossfadeProgressWrapsQueueInRepeatAllMode(t *testing.T) {
-	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	session := fadingSession()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1687,8 +1698,8 @@ func TestCrossfadeProgressLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 	loader := &fakeLoader{
 		flow: []app.Track{{ID: "3", Title: "Three", Artist: "C"}},
 	}
-	session := &fakePlaybackSession{faded: make(chan time.Duration, 1)}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
+	session := fadingSession()
+	model := NewWithProviderAndEngine(config.Default(), withStream(loader), newFakeEngine())
 	model.session = session
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
@@ -1718,8 +1729,8 @@ func TestCrossfadeProgressLoadsMoreFlowBeforeRepeatAllWrap(t *testing.T) {
 }
 
 func TestCrossfadeProgressDoesNothingWhenDisabled(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
-	model.session = &fakePlaybackSession{}
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
+	model.session = playbacktest.NewSession()
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
 	model.app.Config.CrossfadeEnabled = false
@@ -1742,7 +1753,7 @@ func TestCrossfadeProgressDoesNothingWhenDisabled(t *testing.T) {
 }
 
 func TestStartingNextTrackClearsStaleNowPlayingAndArtwork(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "Old Song", Artist: "A"},
 		{ID: "2", Title: "New Song", Artist: "B"},
@@ -2045,10 +2056,10 @@ func TestStatusLineDoesNotIncludeVisualizer(t *testing.T) {
 }
 
 func TestPlaybackDisablesAudioBandsWhenDisplayModeOff(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
+	runtime := newFakeEngine()
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeOff
-	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), runtime)
+	model := NewWithProviderAndEngine(cfg, withStream(&fakeLoader{}), runtime)
 
 	cmd := model.startTrackPlayback("1")
 	if cmd == nil {
@@ -2056,19 +2067,19 @@ func TestPlaybackDisablesAudioBandsWhenDisplayModeOff(t *testing.T) {
 	}
 	_ = firstBatchMessage(cmd)
 
-	if len(runtime.handlers) != 1 {
-		t.Fatalf("expected one playback handler, got %d", len(runtime.handlers))
+	if len(runtime.handlers()) != 1 {
+		t.Fatalf("expected one playback handler, got %d", len(runtime.handlers()))
 	}
-	if runtime.handlers[0].OnAudioBands != nil {
+	if runtime.handlers()[0].OnAudioBands != nil {
 		t.Fatal("did not expect audio bands handler when display mode is off")
 	}
 }
 
 func TestPlaybackEnablesAudioBandsWhenDisplayModeOn(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
+	runtime := newFakeEngine()
 	cfg := config.Default()
 	cfg.DisplayMode = config.DisplayModeEqualizer
-	model := NewWithProviderAndRuntime(cfg, withStream(&fakeLoader{}), runtime)
+	model := NewWithProviderAndEngine(cfg, withStream(&fakeLoader{}), runtime)
 
 	cmd := model.startTrackPlayback("1")
 	if cmd == nil {
@@ -2076,10 +2087,10 @@ func TestPlaybackEnablesAudioBandsWhenDisplayModeOn(t *testing.T) {
 	}
 	_ = firstBatchMessage(cmd)
 
-	if len(runtime.handlers) != 1 {
-		t.Fatalf("expected one playback handler, got %d", len(runtime.handlers))
+	if len(runtime.handlers()) != 1 {
+		t.Fatalf("expected one playback handler, got %d", len(runtime.handlers()))
 	}
-	if runtime.handlers[0].OnAudioBands == nil {
+	if runtime.handlers()[0].OnAudioBands == nil {
 		t.Fatal("expected audio bands handler when display mode is enabled")
 	}
 }
@@ -2098,8 +2109,8 @@ func TestArtworkSlotDoesNotLeakCachedThemeBackground(t *testing.T) {
 }
 
 func TestSelectingTrackInCurrentCollectionKeepsExistingQueue(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.ActivePanel = app.ActivePanelMain
 	model.app.CurrentTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
@@ -2124,14 +2135,14 @@ func TestSelectingTrackInCurrentCollectionKeepsExistingQueue(t *testing.T) {
 
 	nextModel, _ = updated.Update(cmd())
 	updated = nextModel.(Model)
-	if len(runtime.started) != 1 || runtime.started[0] != "2" {
-		t.Fatalf("expected selected queued track to start, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "2" {
+		t.Fatalf("expected selected queued track to start, got %#v", runtime.started())
 	}
 }
 
 func TestPlaybackProgressPrebuffersNextQueuedTrack(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 3
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2153,8 +2164,8 @@ func TestPlaybackProgressPrebuffersNextQueuedTrack(t *testing.T) {
 }
 
 func TestHandleNextWrapsAtQueueEndWhenRepeatAllEnabled(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.QueueTracks = []app.Track{
 		{ID: "1", Title: "One", Artist: "A"},
 		{ID: "2", Title: "Two", Artist: "B"},
@@ -2175,8 +2186,8 @@ func TestHandleNextWrapsAtQueueEndWhenRepeatAllEnabled(t *testing.T) {
 		t.Fatal("expected playback command after scheduled repeat-all next")
 	}
 	_, _ = updated.Update(playbackCmd())
-	if len(runtime.started) != 1 || runtime.started[0] != "1" {
-		t.Fatalf("expected first track to start, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "1" {
+		t.Fatalf("expected first track to start, got %#v", runtime.started())
 	}
 }
 
@@ -2406,8 +2417,8 @@ func TestFlowLoadInvalidatesPendingSearch(t *testing.T) {
 }
 
 func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 3
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2429,8 +2440,8 @@ func TestPrebufferReadyStatusSurvivesWindowShift(t *testing.T) {
 }
 
 func TestPlaybackTrackChangedMarksCurrentTrackReady(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 7
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2469,8 +2480,8 @@ func TestReadyPrebufferStatusesEvictOldestWhenCacheLimitIsReached(t *testing.T) 
 }
 
 func TestCollectionLoadPrebuffersFirstTwentyQueuedTracks(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	tracks := make([]app.Track, 25)
 	want := make([]string, 20)
 	for i := range tracks {
@@ -2492,8 +2503,8 @@ func TestCollectionLoadPrebuffersFirstTwentyQueuedTracks(t *testing.T) {
 }
 
 func TestLastFlowTrackStartsLoadingNextBatchForPrebuffer(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 2
 	model.app.QueueTracks = []app.Track{
@@ -2515,8 +2526,8 @@ func TestLastFlowTrackStartsLoadingNextBatchForPrebuffer(t *testing.T) {
 }
 
 func TestStartingLastFlowTrackLoadsNextBatchImmediately(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.IsFlowQueue = true
 	model.app.FlowNextIndex = 2
 	model.app.QueueTracks = []app.Track{
@@ -2535,8 +2546,8 @@ func TestStartingLastFlowTrackLoadsNextBatchImmediately(t *testing.T) {
 }
 
 func TestAppendedFlowBatchPrebuffersFirstNewTrack(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.IsPlaying = true
 	model.app.IsFlowQueue = true
 	model.app.FlowLoadingMore = true
@@ -2568,8 +2579,8 @@ func TestAppendedFlowBatchPrebuffersFirstNewTrack(t *testing.T) {
 }
 
 func TestPlaybackProgressClearsPrebufferAtQueueEnd(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 4
 	model.app.IsPlaying = true
 	model.app.QueueTracks = []app.Track{
@@ -2585,8 +2596,8 @@ func TestPlaybackProgressClearsPrebufferAtQueueEnd(t *testing.T) {
 }
 
 func TestPlaybackErrorStopsPlayback(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 1
 	model.currentTrackID = "track-1"
 	model.currentQuality = testQuality320
@@ -2607,17 +2618,17 @@ func TestPlaybackErrorStopsPlayback(t *testing.T) {
 	msg := firstBatchMessage(cmd)
 	nextModel, _ = updated.Update(msg)
 	updated = nextModel.(Model)
-	if len(runtime.started) != 1 || runtime.started[0] != "track-1" {
-		t.Fatalf("expected same track to be reloaded, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "track-1" {
+		t.Fatalf("expected same track to be reloaded, got %#v", runtime.started())
 	}
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQuality320 {
-		t.Fatalf("expected first retry to keep quality, got %#v", runtime.qualities)
+	if len(runtime.qualities()) != 1 || runtime.qualities()[0] != testQuality320 {
+		t.Fatalf("expected first retry to keep quality, got %#v", runtime.qualities())
 	}
 }
 
 func TestPlaybackRetryReducesQualityAfterReloadFails(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.currentPlayID = 2
 	model.currentTrackID = "track-2"
 	model.currentQuality = testQualityFlac
@@ -2633,8 +2644,8 @@ func TestPlaybackRetryReducesQualityAfterReloadFails(t *testing.T) {
 	msg := firstBatchMessage(cmd)
 	nextModel, _ = updated.Update(msg)
 	updated = nextModel.(Model)
-	if len(runtime.qualities) != 1 || runtime.qualities[0] != testQuality320 {
-		t.Fatalf("expected retry to downgrade to 320 kbps, got %#v", runtime.qualities)
+	if len(runtime.qualities()) != 1 || runtime.qualities()[0] != testQuality320 {
+		t.Fatalf("expected retry to downgrade to 320 kbps, got %#v", runtime.qualities())
 	}
 	if updated.currentQuality != testQuality320 {
 		t.Fatalf("expected model quality to track downgrade, got %+v", updated.currentQuality)
@@ -2642,7 +2653,7 @@ func TestPlaybackRetryReducesQualityAfterReloadFails(t *testing.T) {
 }
 
 func TestPlaybackRetryStopsAtLowestQuality(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.currentPlayID = 3
 	model.currentTrackID = "track-3"
 	model.currentQuality = testQuality128
@@ -2660,7 +2671,7 @@ func TestPlaybackRetryStopsAtLowestQuality(t *testing.T) {
 }
 
 func TestCanceledPlaybackCompletionIsIgnored(t *testing.T) {
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), newFakeEngine())
 	model.currentPlayID = 1
 	model.app.IsPlaying = true
 
@@ -2681,7 +2692,7 @@ func TestEnterOnSearchPlaylistLoadsPlaylist(t *testing.T) {
 		},
 		playlist: []app.Track{{ID: "11", Title: "Track", Artist: "Artist"}},
 	}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(loader), newFakeEngine())
 	model.width = 120
 	model.height = 40
 	model.app.ShowingSearchResult = true
@@ -2785,8 +2796,8 @@ func TestSearchTrackResultsUseAvailablePanelWidth(t *testing.T) {
 }
 
 func TestEnterOnSearchTrackQueuesAllSearchTracksAtSelectedIndex(t *testing.T) {
-	runtime := &fakePlaybackRuntime{}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(&fakeLoader{}), runtime)
+	runtime := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), runtime)
 	model.app.ShowingSearchResult = true
 	model.app.SearchCategory = app.SearchCategoryTracks
 	model.app.CurrentTracks = []app.Track{
@@ -2811,8 +2822,8 @@ func TestEnterOnSearchTrackQueuesAllSearchTracksAtSelectedIndex(t *testing.T) {
 
 	nextModel, _ = updated.Update(cmd())
 	_ = nextModel.(Model)
-	if len(runtime.started) != 1 || runtime.started[0] != "2" {
-		t.Fatalf("expected selected search track to start, got %#v", runtime.started)
+	if len(runtime.started()) != 1 || runtime.started()[0] != "2" {
+		t.Fatalf("expected selected search track to start, got %#v", runtime.started())
 	}
 }
 
@@ -2822,7 +2833,7 @@ func TestEnterOnSearchArtistStartsSearch(t *testing.T) {
 			Tracks: []app.Track{{ID: "99", Title: "Artist Track", Artist: "Aster Lane"}},
 		},
 	}
-	model := NewWithProviderAndRuntime(config.Default(), withStream(loader), &fakePlaybackRuntime{})
+	model := NewWithProviderAndEngine(config.Default(), withStream(loader), newFakeEngine())
 	model.width = 120
 	model.height = 40
 	model.app.ShowingSearchResult = true

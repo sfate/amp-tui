@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/provider"
 )
 
@@ -49,7 +50,7 @@ func signIn(cfg provider.Config, factory provider.Factory) tea.Msg {
 	return loginSucceededMsg{secret: cfg.Credential, provider: p}
 }
 
-func listenMediaControlCmd(events <-chan MediaControlCommand) tea.Cmd {
+func listenMediaControlCmd(events <-chan playback.MediaCommand) tea.Cmd {
 	if events == nil {
 		return nil
 	}

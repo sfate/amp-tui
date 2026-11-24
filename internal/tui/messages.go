@@ -3,7 +3,7 @@ package tui
 import (
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/core"
-	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/provider"
 )
 
@@ -47,7 +47,7 @@ type searchFailedMsg struct {
 
 type playbackStartedMsg struct {
 	playID  int
-	session PlaybackSession
+	session playback.Session
 }
 
 type playbackStartFailedMsg struct {
@@ -67,7 +67,7 @@ type playbackTrackChangedMsg struct {
 type bufferingProgressMsg struct {
 	playID  int
 	percent uint8
-	stage   player.BufferingStage
+	stage   playback.BufferingStage
 }
 
 type playbackProgressMsg struct {
@@ -122,5 +122,5 @@ type artworkLoadedMsg struct {
 type loadingTickMsg struct{}
 
 type mediaControlCommandMsg struct {
-	command MediaControlCommand
+	command playback.MediaCommand
 }

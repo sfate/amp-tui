@@ -58,7 +58,7 @@ func (m *Model) onLoginSucceeded(msg loginSucceededMsg) tea.Cmd {
 	m.app.Config.Provider = string(m.providerID)
 	m.setProvider(msg.provider)
 	m.setCatalog(catalogInfoOf(msg.provider))
-	m.runtime = newPlayerRuntime(msg.provider)
+	m.runtime = newPlayerRuntime(m.engine, msg.provider)
 	m.login = loginState{}
 	m.ready = false
 	m.app.StatusMessage = fmt.Sprintf("Login saved. Loading %s library...", m.providerName())

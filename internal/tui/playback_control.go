@@ -77,7 +77,7 @@ func (m *Model) startTrackPlaybackWithQualityAndSeek(trackID string, quality cor
 	playID := m.nextPlaybackID
 	m.app.IsPlaying = true
 	m.app.StatusMessage = "Starting playback..."
-	enableVisualizer := displayMode(m.app.Config) != config.DisplayModeOff
+	enableVisualizer := displayMode(m.app.Config) != config.DisplayModeOff && m.runtime.capabilities().Visualizer
 	return tea.Batch(
 		startPlaybackCmdWithEvents(playID, trackID, m.runtime, quality, seekMS, enableVisualizer, m.playbackEvents),
 		m.loadMoreFlow(false),
@@ -107,8 +107,7 @@ func (m *Model) seekCurrentTrack(deltaMS int64) tea.Cmd {
 	if total := m.app.NowPlaying.TotalMS; total > 0 && seekMS >= total {
 		seekMS = total - 1
 	}
-	m.app.StatusMessage = fmt.Sprintf("Seeking to %s", formatClock(seekMS))
-	return m.startTrackPlaybackAt(m.currentTrackID, m.currentQuality, seekMS, true)
+	return m.seekTo(seekMS)
 }
 
 func (m *Model) seekCurrentTrackTo(positionMS uint64) tea.Cmd {
@@ -123,7 +122,19 @@ func (m *Model) seekCurrentTrackTo(positionMS uint64) tea.Cmd {
 	if total := m.app.NowPlaying.TotalMS; total > 0 && positionMS >= total {
 		positionMS = total - 1
 	}
+	return m.seekTo(positionMS)
+}
+
+// seekTo moves the playing session when the engine can, else restarts the track at positionMS.
+func (m *Model) seekTo(positionMS uint64) tea.Cmd {
 	m.app.StatusMessage = fmt.Sprintf("Seeking to %s", formatClock(positionMS))
+	if m.session != nil && m.runtime.capabilities().Seek && m.session.Seek(positionMS) == nil {
+		m.app.NowPlaying.CurrentMS = positionMS
+		m.progress.baseMS = positionMS
+		m.progress.since = time.Now()
+		m.syncMediaControl()
+		return nil
+	}
 	return m.startTrackPlaybackAt(m.currentTrackID, m.currentQuality, positionMS, true)
 }
 
@@ -199,18 +210,14 @@ func (m *Model) stopCurrentSession() {
 		return
 	}
 	if m.app.Config.CrossfadeEnabled && m.app.Config.CrossfadeDurationMS > 0 {
-		if session, ok := m.session.(fadeStoppingSession); ok {
-			go session.FadeOutStop(time.Duration(m.app.Config.CrossfadeDurationMS) * time.Millisecond)
-			return
-		}
+		go m.session.FadeOutStop(time.Duration(m.app.Config.CrossfadeDurationMS) * time.Millisecond)
+		return
 	}
 	m.session.Stop()
 }
 
 func (m *Model) shutdownRuntime() {
-	if runtime, ok := m.runtime.(ShutdownRuntime); ok {
-		runtime.Shutdown()
-	}
+	m.runtime.shutdown()
 }
 
 func (m Model) qualityLadder() []core.Quality {

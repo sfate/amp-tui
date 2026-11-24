@@ -13,6 +13,7 @@ import (
 
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/doctor"
+	"github.com/sfate/amp-tui/internal/playback/native"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/provider/deezer"
 	"github.com/sfate/amp-tui/internal/secrets"
@@ -86,7 +87,7 @@ func run(args []string) error {
 		checks := append(doctor.PlatformChecks(), doctor.SecretStoreCheck(secrets.NewKeyring(), secretsPath))
 		return doctor.Run(context.Background(), os.Stdout, checks)
 	}
-	model := tui.New(tui.WithRegistry(reg), tui.WithSecrets(secrets.Default(secretsPath)), tui.WithProviderOverride(o.provider))
+	model := tui.New(tui.WithEngine(native.New()), tui.WithRegistry(reg), tui.WithSecrets(secrets.Default(secretsPath)), tui.WithProviderOverride(o.provider))
 	_, err = tea.NewProgram(model).Run()
 	return err
 }

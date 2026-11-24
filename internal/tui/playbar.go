@@ -6,7 +6,7 @@ import (
 
 	"github.com/sfate/amp-tui/internal/app"
 	"github.com/sfate/amp-tui/internal/config"
-	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/playback"
 )
 
 func (m Model) renderCompactStatusColumn(width, height int) string {
@@ -136,7 +136,7 @@ func formatClock(ms uint64) string {
 	return fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)
 }
 
-func bufferingStatusMessage(percent int, stage player.BufferingStage) string {
+func bufferingStatusMessage(percent int, stage playback.BufferingStage) string {
 	if strings.TrimSpace(string(stage)) == "" {
 		return fmt.Sprintf("Buffering %d%%", percent)
 	}

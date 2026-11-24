@@ -15,6 +15,7 @@ import (
 	"github.com/faiface/beep/mp3"
 	"github.com/faiface/beep/speaker"
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback"
 )
 
 const (
@@ -39,11 +40,11 @@ func NewBeepBackend() *BeepBackend {
 	}
 }
 
-func (b *BeepBackend) Start(stream io.ReadSeeker, audioFormat core.AudioFormat, handler EventHandler, onFinished func(error)) (Controller, error) {
+func (b *BeepBackend) Start(stream io.ReadSeeker, audioFormat core.AudioFormat, handler playback.EventHandler, onFinished func(error)) (Controller, error) {
 	return b.StartAt(stream, audioFormat, 0, handler, onFinished)
 }
 
-func (b *BeepBackend) StartAt(stream io.ReadSeeker, audioFormat core.AudioFormat, initialMS uint64, handler EventHandler, onFinished func(error)) (Controller, error) {
+func (b *BeepBackend) StartAt(stream io.ReadSeeker, audioFormat core.AudioFormat, initialMS uint64, handler playback.EventHandler, onFinished func(error)) (Controller, error) {
 	if err := b.ensureSpeaker(); err != nil {
 		return nil, err
 	}

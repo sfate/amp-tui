@@ -14,9 +14,20 @@ linters:
             - "**/internal/tui/**"
             - "**/internal/app/**"
             - "**/internal/player/**"
+            - "**/internal/playback/**"
             - "**/internal/core/**"
             - "**/internal/config/**"
             - "**/internal/provider/*.go"
           deny:
             - pkg: github.com/sfate/amp-tui/internal/provider/deezer
               desc: use the provider contracts in internal/provider instead
+        # The TUI plays through the playback.Engine contract; cmd/amp-tui injects the engine.
+        engine-neutral:
+          list-mode: lax
+          files:
+            - "**/internal/tui/**"
+          deny:
+            - pkg: github.com/sfate/amp-tui/internal/player
+              desc: use the engine contract in internal/playback instead
+            - pkg: github.com/sfate/amp-tui/internal/playback/native
+              desc: take the engine through tui.WithEngine instead

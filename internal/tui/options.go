@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/secrets"
 )
@@ -11,6 +12,7 @@ type options struct {
 	registry         *provider.Registry
 	secrets          secrets.Store
 	providerOverride provider.ID
+	engine           playback.Engine
 }
 
 // WithRegistry sets the providers the TUI can sign in to; main builds it.
@@ -26,6 +28,11 @@ func WithSecrets(s secrets.Store) Option {
 // WithProviderOverride selects the provider for this run only; Settings changes still save.
 func WithProviderOverride(id provider.ID) Option {
 	return func(o *options) { o.providerOverride = id }
+}
+
+// WithEngine sets the engine that plays tracks; without it the TUI browses but cannot play.
+func WithEngine(e playback.Engine) Option {
+	return func(o *options) { o.engine = e }
 }
 
 func applyOptions(opts []Option) options {

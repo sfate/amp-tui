@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/provider"
 )
 
@@ -59,6 +60,15 @@ func mp3Source(info core.TrackInfo, data []byte) *fakeStreamSource {
 	}}
 }
 
+func resolveSource(t *testing.T, streams *fakeStreamSource, id string, quality core.Quality) provider.Source {
+	t.Helper()
+	source, err := streams.Resolve(context.Background(), id, quality)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
+
 type fakeBackend struct {
 	mu         sync.Mutex
 	playedData []byte
@@ -67,11 +77,11 @@ type fakeBackend struct {
 	format     core.AudioFormat
 }
 
-func (b *fakeBackend) Start(stream io.ReadSeeker, format core.AudioFormat, handler EventHandler, onFinished func(error)) (Controller, error) {
+func (b *fakeBackend) Start(stream io.ReadSeeker, format core.AudioFormat, handler playback.EventHandler, onFinished func(error)) (Controller, error) {
 	return b.StartAt(stream, format, 0, handler, onFinished)
 }
 
-func (b *fakeBackend) StartAt(stream io.ReadSeeker, format core.AudioFormat, initialMS uint64, _ EventHandler, onFinished func(error)) (Controller, error) {
+func (b *fakeBackend) StartAt(stream io.ReadSeeker, format core.AudioFormat, initialMS uint64, _ playback.EventHandler, onFinished func(error)) (Controller, error) {
 	b.mu.Lock()
 	b.initialMS = initialMS
 	b.format = format
@@ -104,7 +114,7 @@ func (c *fakeController) Stop() {
 	c.backend.stopped = true
 }
 
-func TestStartTrackPipelineStreamsAudio(t *testing.T) {
+func TestStartSourcePipelineStreamsAudio(t *testing.T) {
 	plaintext := bytes.Repeat([]byte{0x5a}, chunkSizeForTest()*4)
 
 	client := mp3Source(core.TrackInfo{ID: "42", Title: "Track", Artist: "Artist"}, plaintext)
@@ -116,14 +126,12 @@ func TestStartTrackPipelineStreamsAudio(t *testing.T) {
 	var progressTotal atomic.Uint64
 	var bufferingMax atomic.Uint32
 
-	session := StartTrackPipeline(
+	session := StartSourcePipeline(
 		context.Background(),
-		client,
 		backend,
-		"42",
-		testQuality320,
+		resolveSource(t, client, "42", testQuality320),
 		0,
-		EventHandler{
+		playback.EventHandler{
 			OnTrackChanged: func(info core.TrackInfo, quality core.Quality, initialMS uint64) {
 				changed.Store(info.ID == "42" && quality == testQuality320 && initialMS == 0)
 			},
@@ -131,7 +139,7 @@ func TestStartTrackPipelineStreamsAudio(t *testing.T) {
 				progressCurrent.Store(currentMS)
 				progressTotal.Store(totalMS)
 			},
-			OnBufferingProgress: func(percent uint8, _ BufferingStage) {
+			OnBufferingProgress: func(percent uint8, _ playback.BufferingStage) {
 				for {
 					current := bufferingMax.Load()
 					if uint32(percent) <= current || bufferingMax.CompareAndSwap(current, uint32(percent)) {
@@ -180,20 +188,18 @@ func TestStartTrackPipelineStreamsAudio(t *testing.T) {
 	}
 }
 
-func TestStartTrackPipelinePassesInitialSeekTimeToBackend(t *testing.T) {
+func TestStartSourcePipelinePassesInitialSeekTimeToBackend(t *testing.T) {
 	plaintext := bytes.Repeat([]byte("abcd"), 1024)
 
 	client := mp3Source(core.TrackInfo{ID: "42", Title: "Track", Artist: "Artist", DurationMS: 4000}, plaintext)
 	backend := &fakeBackend{}
 
-	session := StartTrackPipeline(
+	session := StartSourcePipeline(
 		context.Background(),
-		client,
 		backend,
-		"42",
-		testQuality320,
+		resolveSource(t, client, "42", testQuality320),
 		2000,
-		EventHandler{},
+		playback.EventHandler{},
 		PipelineOptions{
 			PrebufferBytes: 1,
 			ChunkSize:      chunkSizeForTest(),
@@ -214,14 +220,14 @@ func TestStartTrackPipelinePassesInitialSeekTimeToBackend(t *testing.T) {
 	}
 }
 
-func TestStartTrackPipelineReadsPlainByteSource(t *testing.T) {
+func TestStartSourcePipelineReadsPlainByteSource(t *testing.T) {
 	mp3 := append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), bytes.Repeat([]byte{0xff, 0xfb, 0x90, 0x64}, 1500)...)
 	streams := mp3Source(core.TrackInfo{ID: "7", Title: "Plain", Artist: "Artist"}, mp3)
 	bytesSrc := streams.source.Bytes.(*fakeByteSource)
 	backend := &fakeBackend{}
 	var gotInfo atomic.Value
 
-	session := StartTrackPipeline(context.Background(), streams, backend, "7", testQuality320, 0, EventHandler{
+	session := StartSourcePipeline(context.Background(), backend, resolveSource(t, streams, "7", testQuality320), 0, playback.EventHandler{
 		OnTrackChanged: func(info core.TrackInfo, _ core.Quality, _ uint64) { gotInfo.Store(info) },
 	}, PipelineOptions{PrebufferBytes: 1024})
 	if err := session.Wait(); err != nil {
@@ -247,7 +253,7 @@ func TestStartTrackPipelineReadsPlainByteSource(t *testing.T) {
 	}
 }
 
-func TestStartTrackPipelineStartsUnseekableSourceAtZero(t *testing.T) {
+func TestStartSourcePipelineStartsUnseekableSourceAtZero(t *testing.T) {
 	data := bytes.Repeat([]byte{0x01}, 4096)
 	streams := &fakeStreamSource{source: provider.Source{
 		Info:           core.TrackInfo{ID: "9"},
@@ -261,7 +267,11 @@ func TestStartTrackPipelineStartsUnseekableSourceAtZero(t *testing.T) {
 	changedMS.Store(1)
 	var totalMS atomic.Uint64
 
-	session := StartTrackPipeline(context.Background(), streams, backend, "9", testQualityFlac, 2000, EventHandler{
+	source, err := streams.Resolve(context.Background(), "9", testQualityFlac)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := StartSourcePipeline(context.Background(), backend, source, 2000, playback.EventHandler{
 		OnTrackChanged:     func(_ core.TrackInfo, _ core.Quality, initialMS uint64) { changedMS.Store(initialMS) },
 		OnPlaybackProgress: func(_, total uint64) { totalMS.Store(total) },
 	}, PipelineOptions{PrebufferBytes: 1})

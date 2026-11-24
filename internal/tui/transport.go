@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
+	"github.com/sfate/amp-tui/internal/playback"
 )
 
 func (m *Model) togglePlayPause() {
@@ -46,27 +47,27 @@ func (m *Model) togglePlayPause() {
 	}
 }
 
-func (m *Model) handleMediaControlCommand(command MediaControlCommand) tea.Cmd {
+func (m *Model) handleMediaControlCommand(command playback.MediaCommand) tea.Cmd {
 	switch command.Kind {
-	case MediaControlPlay:
+	case playback.MediaPlay:
 		if !m.app.IsPlaying {
 			return m.playCurrentQueueTrackOrResume()
 		}
-	case MediaControlPause:
+	case playback.MediaPause:
 		if m.app.IsPlaying {
 			m.togglePlayPause()
 		}
-	case MediaControlToggle:
+	case playback.MediaToggle:
 		if m.session != nil || m.app.IsPlaying {
 			m.togglePlayPause()
 			return nil
 		}
 		return m.playCurrentQueueTrackOrResume()
-	case MediaControlNext:
+	case playback.MediaNext:
 		return m.handleNext()
-	case MediaControlPrevious:
+	case playback.MediaPrevious:
 		return m.handlePrevious()
-	case MediaControlSetPosition:
+	case playback.MediaSetPosition:
 		return m.seekCurrentTrackTo(command.PositionMS)
 	}
 	return nil
@@ -90,26 +91,25 @@ func (m *Model) playCurrentQueueTrackOrResume() tea.Cmd {
 }
 
 func (m Model) listenMediaControlCmd() tea.Cmd {
-	runtime, ok := m.runtime.(MediaControlRuntime)
+	media, ok := m.runtime.mediaController()
 	if !ok {
 		return nil
 	}
-	return listenMediaControlCmd(runtime.MediaControlEvents())
+	return listenMediaControlCmd(media.MediaCommands())
 }
 
 func (m Model) syncMediaControl() {
-	runtime, ok := m.runtime.(MediaControlRuntime)
+	media, ok := m.runtime.mediaController()
 	if !ok {
 		return
 	}
-	state := MediaControlState{
+	state := playback.MediaState{
 		Playing:     m.app.IsPlaying,
 		Stopped:     !m.app.IsPlaying && m.session == nil,
 		Volume:      m.app.Volume,
 		CanNext:     m.canGoNext(),
 		CanPrevious: m.canGoPrevious(),
 		CanSeek:     m.app.NowPlaying != nil && m.currentQuality.Seekable,
-		RepeatMode:  appRepeatMode(m.app.RepeatMode),
 	}
 	if now := m.app.NowPlaying; now != nil {
 		state.TrackID = now.ID
@@ -121,7 +121,7 @@ func (m Model) syncMediaControl() {
 			state.AlbumArtURL = *now.AlbumArtURL
 		}
 	}
-	runtime.UpdateMediaControl(state)
+	media.UpdateMediaState(state)
 }
 
 func (m Model) canGoNext() bool {
