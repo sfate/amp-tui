@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	charm.land/bubbletea/v2 v2.1.2
-	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/ansi v0.11.10
 	github.com/faiface/beep v1.1.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	golang.org/x/crypto v0.59.0
