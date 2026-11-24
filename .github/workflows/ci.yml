@@ -12,7 +12,6 @@ on:
 
 jobs:
   test-and-lint:
-    name: CI
     runs-on: ubuntu-latest
 
     steps:
