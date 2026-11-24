@@ -201,10 +201,17 @@ type Model struct {
 	perfLogPath       string
 	perfLastReport    time.Time
 	perfMsgCounts     map[string]int
+	configLoadErr     error
 }
 
 func New() Model {
-	return NewWithConfig(config.Load())
+	cfg, err := config.Load()
+	model := NewWithConfig(cfg)
+	if err != nil {
+		model.configLoadErr = err
+		model.app.StatusMessage = fmt.Sprintf("Config error, settings will not be saved: %v", err)
+	}
+	return model
 }
 
 func NewWithConfig(cfg config.Config) Model {
@@ -303,12 +310,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loginInput = ""
 		m.ready = false
 		m.app.StatusMessage = "Login saved. Loading Deezer library..."
-		if m.saveConfig != nil {
-			if err := m.saveConfig(m.app.Config); err != nil {
-				m.app.StatusMessage = fmt.Sprintf("Login validated, but save failed: %v", err)
-				m.ready = true
-				return m, nil
-			}
+		if err := m.writeConfig(); err != nil {
+			m.app.StatusMessage = fmt.Sprintf("Login validated, but save failed: %v", err)
+			m.ready = true
+			return m, nil
 		}
 		return m, tea.Batch(bootstrapCmd(m.loader), loadingTickCmd(), m.listenMediaControlCmd())
 	case loginFailedMsg:
@@ -1536,12 +1541,20 @@ func (m *Model) adjustSelectedSetting(direction int) {
 }
 
 func (m *Model) persistConfig() {
-	if m.saveConfig == nil {
-		return
-	}
-	if err := m.saveConfig(m.app.Config); err != nil {
+	if err := m.writeConfig(); err != nil {
 		m.app.StatusMessage = fmt.Sprintf("Save config error: %v", err)
 	}
+}
+
+// writeConfig refuses to save while the config file on disk failed to load, so the file is not replaced by defaults.
+func (m *Model) writeConfig() error {
+	if m.configLoadErr != nil {
+		return fmt.Errorf("fix or remove the config file first: %w", m.configLoadErr)
+	}
+	if m.saveConfig == nil {
+		return nil
+	}
+	return m.saveConfig(m.app.Config)
 }
 
 func (m *Model) startTrackPlayback(trackID string) tea.Cmd {

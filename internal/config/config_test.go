@@ -46,3 +46,31 @@ func TestNormalizeDisplayModeAcceptsVisualizerModes(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadMissingFileReturnsDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg != Default() {
+		t.Fatalf("expected defaults, got %+v", cfg)
+	}
+}
+
+func TestLoadBrokenFileReturnsError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".deezer-tui-config.json"), []byte(`{"arl": "secret",`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if cfg != Default() {
+		t.Fatalf("expected defaults with error, got %+v", cfg)
+	}
+}
