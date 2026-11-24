@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sfate/deezer-tui/internal/colorscheme"
+	"github.com/sfate/amp-tui/internal/colorscheme"
 )
 
 type AudioQuality string

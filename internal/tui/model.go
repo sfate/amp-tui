@@ -15,12 +15,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	cellansi "github.com/charmbracelet/x/ansi"
 
-	"github.com/sfate/deezer-tui/internal/app"
-	"github.com/sfate/deezer-tui/internal/auth"
-	"github.com/sfate/deezer-tui/internal/colorscheme"
-	"github.com/sfate/deezer-tui/internal/config"
-	"github.com/sfate/deezer-tui/internal/deezer"
-	"github.com/sfate/deezer-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/app"
+	"github.com/sfate/amp-tui/internal/auth"
+	"github.com/sfate/amp-tui/internal/colorscheme"
+	"github.com/sfate/amp-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/player"
 )
 
 var activePalette = colorscheme.Lookup(colorscheme.Aetheria).Palette
@@ -740,23 +740,23 @@ func (m Model) View() tea.View {
 	}()
 
 	if m.width == 0 || m.height == 0 {
-		view := tea.NewView("Loading deezer-tui...")
+		view := tea.NewView("Loading amp-tui...")
 		view.AltScreen = true
-		view.WindowTitle = "deezer-tui"
+		view.WindowTitle = "amp-tui"
 		return view
 	}
 
 	if m.loginActive {
 		view := tea.NewView(fillBackground(m.renderLoginScreen(), m.width))
 		view.AltScreen = true
-		view.WindowTitle = "deezer-tui login"
+		view.WindowTitle = "amp-tui login"
 		return view
 	}
 
 	if !m.ready {
 		view := tea.NewView(fillBackground(m.renderLoadingScreen(), m.width))
 		view.AltScreen = true
-		view.WindowTitle = "deezer-tui"
+		view.WindowTitle = "amp-tui"
 		return view
 	}
 
@@ -797,7 +797,7 @@ func (m Model) View() tea.View {
 		content = fillViewport(content, m.width, m.height)
 		view := tea.NewView(content)
 		view.AltScreen = true
-		view.WindowTitle = "deezer-tui"
+		view.WindowTitle = "amp-tui"
 		return view
 	}
 	queueWidth := middleAvailable / 2
@@ -819,7 +819,7 @@ func (m Model) View() tea.View {
 	content = fillViewport(content, m.width, m.height)
 	view := tea.NewView(content)
 	view.AltScreen = true
-	view.WindowTitle = "deezer-tui"
+	view.WindowTitle = "amp-tui"
 	return view
 }
 
@@ -1979,12 +1979,12 @@ func (m Model) hasLoadingPrebuffer() bool {
 }
 
 func perfLogPathFromEnv() string {
-	value := strings.TrimSpace(os.Getenv("DEEZER_TUI_PERF_LOG"))
+	value := strings.TrimSpace(os.Getenv("AMP_TUI_PERF_LOG"))
 	if value == "" {
 		return ""
 	}
 	if value == "1" || strings.EqualFold(value, "true") {
-		return os.TempDir() + string(os.PathSeparator) + "deezer-tui-perf.log"
+		return os.TempDir() + string(os.PathSeparator) + "amp-tui-perf.log"
 	}
 	return value
 }
@@ -2411,7 +2411,7 @@ func (m Model) renderPlaybar() string {
 }
 
 func (m Model) renderHeader() string {
-	left := " deezer-tui "
+	left := " amp-tui "
 	center := fmt.Sprintf(" %s ", displayCollectionTitle(derefString(m.app.CurrentPlaylistID, "Browse")))
 	right := fmt.Sprintf(" %s | q quit ", activePanelLabel(m.app.ActivePanel))
 	return renderTripleLine(left, center, right, m.width)
@@ -3649,7 +3649,7 @@ func (m Model) renderLoginScreen() string {
 	}
 
 	lines := []string{
-		centerText(paint("deezer-tui", activePalette.Purple, ""), m.width),
+		centerText(paint("amp-tui", activePalette.Purple, ""), m.width),
 		"",
 		centerText(paint("Sign in with Deezer", activePalette.TextStrong, ""), m.width),
 	}

@@ -1,8 +1,8 @@
-# deezer-tui
+# amp-tui
 
-TUI client for Deezer, written on Go, based on Bubble Tea.
+Terminal music player written in Go with Bubble Tea. It started as [deezer-tui](https://github.com/sfate/deezer-tui) and grows into one player with several backend providers: Deezer (available now), YouTube, Spotify and Apple Music (planned, see the issues).
 
-<img src='images/preview-loading.png' width='550' alt='Deezer TUI loading' /> 
+<img src='images/preview-loading.png' width='550' alt='amp-tui loading' /> 
 
 ## Features
 
@@ -67,13 +67,19 @@ On macOS, `make build` also precompiles the native playback helper into the user
 The binary is written to:
 
 ```bash
-./bin/deezer-tui
+./bin/amp-tui
 ```
 
 For a direct development run:
 
 ```bash
-go run ./cmd/deezer-tui
+go run ./cmd/amp-tui
+```
+
+Check runtime dependencies:
+
+```bash
+./bin/amp-tui --doctor
 ```
 
 Useful checks:
@@ -86,7 +92,7 @@ make test
 
 ## Login
 
-On first launch, `deezer-tui` opens a login screen instead of requiring manual config edits. Saved sessions are validated on startup. If Deezer rejects a saved session, the login screen opens again. Other startup failures show an error with `Enter` to retry or `O` to sign in. If you already have a saved session and want to replace it, press `O` from the app to open the same login flow.
+On first launch, `amp-tui` opens a login screen instead of requiring manual config edits. Saved sessions are validated on startup. If Deezer rejects a saved session, the login screen opens again. Other startup failures show an error with `Enter` to retry or `O` to sign in. If you already have a saved session and want to replace it, press `O` from the app to open the same login flow.
 
 Press `Enter` to confirm opening Deezer in a temporary browser session. After signing in, return to the app. It will capture the Deezer session from that temporary browser, validate it, save it, and load your library automatically.
 
@@ -125,7 +131,7 @@ Theme can be set in the config file or switched in-app. The default theme is Aet
 
 ## Preview
 
-![Deezer TUI preview](images/preview.png)
+![amp-tui preview](images/preview.png)
 
 ## TODO
 
@@ -138,7 +144,7 @@ Theme can be set in the config file or switched in-app. The default theme is Aet
 
 ## Kudos
 
-Original idea and inspiration was taken from [Minuga-RC/deezer-tui](https://github.com/Minuga-RC/deezer-tui).
+amp-tui is based on [sfate/deezer-tui](https://github.com/sfate/deezer-tui). The original idea and inspiration was taken from [Minuga-RC/deezer-tui](https://github.com/Minuga-RC/deezer-tui).
 
 ## License
 

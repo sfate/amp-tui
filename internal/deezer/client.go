@@ -968,7 +968,7 @@ func (c *Client) writeDebugDump(fileName, raw string) {
 	if err != nil {
 		return
 	}
-	base := filepath.Join(homeDir, ".deezer-tui-debug")
+	base := filepath.Join(homeDir, ".amp-tui-debug")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return
 	}

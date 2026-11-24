@@ -14,7 +14,7 @@ import (
 	"github.com/faiface/beep/flac"
 	"github.com/faiface/beep/mp3"
 	"github.com/faiface/beep/speaker"
-	"github.com/sfate/deezer-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/deezer"
 )
 
 const (

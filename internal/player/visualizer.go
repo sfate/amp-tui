@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sfate/deezer-tui/internal/deezer"
 	"github.com/faiface/beep"
+	"github.com/sfate/amp-tui/internal/deezer"
 )
 
 const (

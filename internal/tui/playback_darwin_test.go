@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sfate/deezer-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/deezer"
 )
 
 func TestDarwinPrebufferTakeKeepsCachedTrackReusable(t *testing.T) {
@@ -16,7 +16,7 @@ func TestDarwinPrebufferTakeKeepsCachedTrackReusable(t *testing.T) {
 		TrackID: "1",
 		Quality: deezer.AudioQuality320,
 		Meta:    deezer.TrackMetadata{ID: "1", Title: "One", Artist: "A"},
-		File:    "/tmp/deezer-tui-test.mp3",
+		File:    "/tmp/amp-tui-test.mp3",
 	}
 	store.order = []string{key}
 
@@ -39,7 +39,7 @@ func TestDarwinPrebufferEmptyWindowKeepsCachedTracks(t *testing.T) {
 		TrackID: "1",
 		Quality: deezer.AudioQuality320,
 		Meta:    deezer.TrackMetadata{ID: "1", Title: "One", Artist: "A"},
-		File:    "/tmp/deezer-tui-test.mp3",
+		File:    "/tmp/amp-tui-test.mp3",
 		Cached:  true,
 	}
 	store.order = []string{key}

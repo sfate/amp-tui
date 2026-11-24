@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/sfate/deezer-tui/internal/config"
+	"github.com/sfate/amp-tui/internal/config"
 )
 
 func testApp() *App {

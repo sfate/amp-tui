@@ -20,8 +20,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/sfate/deezer-tui/internal/deezer"
-	"github.com/sfate/deezer-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/player"
 )
 
 //go:embed mac_player_helper.swift
@@ -930,7 +930,7 @@ func prepareDarwinTrackFile(ctx context.Context, client *deezer.Client, trackID 
 		onBufferingProgress(90, player.BufferingStagePreparing)
 	}
 
-	file, err := os.CreateTemp("", "deezer-tui-*"+qualityExtension(quality))
+	file, err := os.CreateTemp("", "amp-tui-*"+qualityExtension(quality))
 	if err != nil {
 		return nil, err
 	}
@@ -977,7 +977,7 @@ func ensureMacPlayerHelper() (string, error) {
 			macHelperErr = err
 			return
 		}
-		dir := filepath.Join(cacheDir, "deezer-tui")
+		dir := filepath.Join(cacheDir, "amp-tui")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			macHelperErr = err
 			return
