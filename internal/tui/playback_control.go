@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/config"
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 const (
@@ -79,7 +79,7 @@ func (m *Model) startTrackPlaybackWithQualityAndSeek(trackID string, quality dee
 	enableVisualizer := displayMode(m.app.Config) != config.DisplayModeOff
 	return tea.Batch(
 		startPlaybackCmdWithEvents(playID, trackID, m.runtime, quality, seekMS, enableVisualizer, m.playbackEvents),
-		m.maybeLoadMoreFlowForTail(),
+		m.loadMoreFlow(false),
 	)
 }
 

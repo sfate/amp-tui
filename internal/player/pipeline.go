@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 const (

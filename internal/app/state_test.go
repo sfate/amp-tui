@@ -10,6 +10,8 @@ import (
 func testApp() *App {
 	app := New(config.Default())
 	app.CurrentPlaylistID = stringPtr("__flow__")
+	app.FlowCollectionID = "__flow__"
+	app.NavItems = []string{"Home", "Flow", "Explore", "Favorites", "Settings"}
 	return app
 }
 
@@ -489,8 +491,8 @@ func queueLabels(tracks []Track) []string {
 func TestHandleDownStopsAtLastNavItem(t *testing.T) {
 	app := testApp()
 	app.ActivePanel = ActivePanelNavigation
-	for range len(NavItems) + 2 {
+	for range len(app.NavItems) + 2 {
 		app.HandleDown()
 	}
-	assertSelected(t, app.NavState.Selected(), len(NavItems)-1)
+	assertSelected(t, app.NavState.Selected(), len(app.NavItems)-1)
 }

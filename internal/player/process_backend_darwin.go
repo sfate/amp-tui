@@ -9,7 +9,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 type ProcessBackend struct{}

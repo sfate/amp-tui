@@ -11,6 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/doctor"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 	"github.com/sfate/amp-tui/internal/tui"
 )
 
@@ -40,8 +42,14 @@ func run(args []string) error {
 	if o.doctor {
 		return doctor.Run(context.Background(), os.Stdout, doctor.PlatformChecks())
 	}
-	_, err = tea.NewProgram(tui.New()).Run()
+	_, err = tea.NewProgram(tui.New(tui.WithRegistry(newRegistry()))).Run()
 	return err
+}
+
+func newRegistry() *provider.Registry {
+	reg := provider.NewRegistry()
+	deezer.Register(reg)
+	return reg
 }
 
 func main() {

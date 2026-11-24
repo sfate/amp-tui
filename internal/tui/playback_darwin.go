@@ -20,8 +20,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/sfate/amp-tui/internal/deezer"
 	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/deezer"
 )
 
 //go:embed mac_player_helper.swift
@@ -33,9 +34,9 @@ type defaultPlayerRuntime struct {
 	prebuffer *darwinPrebufferStore
 }
 
-func newPlayerRuntime(loader Loader) PlayerRuntime {
-	capable, ok := loader.(playbackCapableLoader)
-	if !ok {
+func newPlayerRuntime(p provider.Provider) PlayerRuntime {
+	capable, ok := p.(playbackCapableProvider)
+	if !ok || capable.DeezerClient() == nil {
 		return nil
 	}
 	return &defaultPlayerRuntime{

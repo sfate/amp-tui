@@ -32,7 +32,7 @@ func (m *Model) onSearchLoaded(msg searchLoadedMsg) tea.Cmd {
 	m.app.SearchCategory = app.SearchCategoryTracks
 	m.app.ActivePanel = app.ActivePanelMain
 	m.app.MainState.Select(intPtr(0))
-	m.app.CurrentPlaylistID = stringPtr("__search__")
+	m.app.CurrentPlaylistID = stringPtr(searchCollectionID)
 	m.app.StatusMessage = fmt.Sprintf("Search: %q", msg.query)
 	return nil
 }
@@ -74,7 +74,7 @@ func (m *Model) handleSearchResultEnter() tea.Cmd {
 			selected = len(m.app.SearchPlaylists) - 1
 		}
 		pl := m.app.SearchPlaylists[selected]
-		return loadPlaylistCmd(m.loader, pl.ID, pl.Title)
+		return loadPlaylistCmd(m.provider, pl.ID, pl.Title)
 	case app.SearchCategoryArtists:
 		if len(m.app.SearchArtists) == 0 {
 			return nil
@@ -146,11 +146,11 @@ func (m *Model) startSearch(query string) tea.Cmd {
 		m.app.StatusMessage = "Search query is empty"
 		return nil
 	}
-	if m.loader == nil {
+	if m.provider == nil {
 		m.app.IsSearching = false
 		m.app.SearchLoading = false
 		m.search.activeID = 0
-		m.app.StatusMessage = "Search unavailable: Deezer loader is not configured"
+		m.app.StatusMessage = "Search unavailable: no music provider is signed in"
 		return nil
 	}
 	m.search.nextID++
@@ -160,7 +160,7 @@ func (m *Model) startSearch(query string) tea.Cmd {
 	m.app.SearchQuery = query
 	m.app.ViewingSettings = false
 	m.app.ActivePanel = app.ActivePanelMain
-	m.app.CurrentPlaylistID = stringPtr("__search__")
+	m.app.CurrentPlaylistID = stringPtr(searchCollectionID)
 	m.app.CurrentTracks = nil
 	m.app.SearchPlaylists = nil
 	m.app.SearchArtists = nil
@@ -168,7 +168,7 @@ func (m *Model) startSearch(query string) tea.Cmd {
 	m.app.MainState.Select(intPtr(0))
 	m.app.ShowingSearchResult = true
 	m.app.StatusMessage = fmt.Sprintf("Searching for %q...", query)
-	return tea.Batch(searchCmd(m.loader, m.search.activeID, query), loadingTickCmd())
+	return tea.Batch(searchCmd(m.provider, m.search.activeID, query), loadingTickCmd())
 }
 
 func (m Model) appendSearchResultRows(lines []string, width, height int) []string {

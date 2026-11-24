@@ -3,120 +3,57 @@ package tui
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/sfate/amp-tui/internal/auth"
 	"github.com/sfate/amp-tui/internal/config"
-	"github.com/sfate/amp-tui/internal/deezer"
-	"github.com/sfate/amp-tui/internal/player"
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
-func bootstrapCmd(loader Loader) tea.Cmd {
-	if loader == nil {
+func bootstrapCmd(p provider.Provider) tea.Cmd {
+	if p == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		data, err := loader.Bootstrap(context.Background())
+		library, err := p.Bootstrap(context.Background())
 		if err != nil {
 			return bootstrapFailedMsg{err: err}
 		}
-		return bootstrapLoadedMsg{playlists: data.Playlists}
+		return bootstrapLoadedMsg{playlists: library.Playlists}
 	}
 }
 
-func validateLoginCmd(cfg config.Config, loaderFactory func(config.Config) (Loader, error)) tea.Cmd {
-	if loaderFactory == nil {
-		loaderFactory = defaultLoaderFactory
-	}
+func validateLoginCmd(cfg config.Config, factory provider.Factory) tea.Cmd {
 	return func() tea.Msg {
-		loader, err := loaderFactory(cfg)
-		if err != nil {
-			return loginFailedMsg{message: fmt.Sprintf("Login error: %v", err)}
-		}
-		if _, err := loader.Bootstrap(context.Background()); err != nil {
-			return loginFailedMsg{message: fmt.Sprintf("Login validation failed: %v", err)}
-		}
-		return loginSucceededMsg{cfg: cfg, loader: loader}
+		return signIn(cfg, factory)
 	}
 }
 
-func browserLoginCmd(cfg config.Config, loaderFactory func(config.Config) (Loader, error)) tea.Cmd {
+func browserLoginCmd(cfg config.Config, authn provider.Authenticator, factory provider.Factory) tea.Cmd {
 	return func() tea.Msg {
-		arl, err := auth.BrowserLogin(context.Background(), auth.BrowserLoginOptions{})
+		secret, err := authn.BrowserLogin(context.Background())
 		if err != nil {
 			return loginFailedMsg{message: fmt.Sprintf("Browser login failed: %v", err)}
 		}
-		cfg.ARL = arl
-		if loaderFactory == nil {
-			loaderFactory = defaultLoaderFactory
-		}
-		loader, err := loaderFactory(cfg)
-		if err != nil {
-			return loginFailedMsg{message: fmt.Sprintf("Login error: %v", err)}
-		}
-		if _, err := loader.Bootstrap(context.Background()); err != nil {
-			return loginFailedMsg{message: fmt.Sprintf("Login validation failed: %v", err)}
-		}
-		return loginSucceededMsg{cfg: cfg, loader: loader}
+		cfg.ARL = secret
+		return signIn(cfg, factory)
 	}
 }
 
-func startPlaybackCmdWithEvents(playID int, trackID string, runtime PlayerRuntime, quality deezer.AudioQuality, seekMS uint64, enableVisualizer bool, events chan tea.Msg) tea.Cmd {
-	if runtime == nil {
-		return nil
+// signIn builds a provider from cfg and proves the secret with a bootstrap call.
+func signIn(cfg config.Config, factory provider.Factory) tea.Msg {
+	if factory == nil {
+		return loginFailedMsg{message: "Login error: no music provider configured"}
 	}
-	return func() tea.Msg {
-		var visualizerMu sync.Mutex
-		var lastVisualizerSent time.Time
-		handler := player.EventHandler{
-			OnTrackChanged: func(meta deezer.TrackMetadata, q deezer.AudioQuality, initialMS uint64) {
-				events <- playbackTrackChangedMsg{playID: playID, meta: meta, quality: q, initialMS: initialMS}
-			},
-			OnBufferingProgress: func(percent uint8, stage player.BufferingStage) {
-				events <- bufferingProgressMsg{playID: playID, percent: percent, stage: stage}
-			},
-			OnPlaybackProgress: func(currentMS, totalMS uint64) {
-				events <- playbackProgressMsg{playID: playID, currentMS: currentMS, totalMS: totalMS}
-			},
-			OnError: func(err error) {
-				events <- playbackErrorMsg{playID: playID, err: err}
-			},
-		}
-		if enableVisualizer {
-			handler.OnAudioBands = func(bands []uint8) {
-				visualizerMu.Lock()
-				if !lastVisualizerSent.IsZero() && time.Since(lastVisualizerSent) < visualizerUIUpdateMinInterval {
-					visualizerMu.Unlock()
-					return
-				}
-				lastVisualizerSent = time.Now()
-				visualizerMu.Unlock()
-
-				copied := append([]uint8(nil), bands...)
-				select {
-				case events <- playbackVisualizerMsg{playID: playID, bands: copied}:
-				default:
-				}
-			}
-		}
-		session, err := runtime.Start(trackID, quality, seekMS, handler)
-		if err != nil {
-			return playbackStartFailedMsg{playID: playID, trackID: trackID, quality: quality, err: err}
-		}
-		return playbackStartedMsg{playID: playID, session: session}
+	p, err := factory(cfg)
+	if err != nil {
+		return loginFailedMsg{message: fmt.Sprintf("Login error: %v", err)}
 	}
-}
-
-func waitPlaybackCmd(playID int, session PlaybackSession) tea.Cmd {
-	if session == nil {
-		return nil
+	if _, err := p.Bootstrap(context.Background()); err != nil {
+		return loginFailedMsg{message: fmt.Sprintf("Login validation failed: %v", err)}
 	}
-	return func() tea.Msg {
-		return playbackFinishedMsg{playID: playID, err: session.Wait()}
-	}
+	return loginSucceededMsg{cfg: cfg, provider: p}
 }
 
 func listenMediaControlCmd(events <-chan MediaControlCommand) tea.Cmd {
@@ -159,64 +96,41 @@ func prebufferTickCmd() tea.Cmd {
 	})
 }
 
-func loadHomeCmd(loader Loader) tea.Cmd {
-	if loader == nil {
+func loadSectionCmd(p provider.Provider, sec provider.Section, autoplay bool) tea.Cmd {
+	if p == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		tracks, err := loader.LoadHome(context.Background())
+		tracks, err := p.LoadSection(context.Background(), sec.ID)
 		if err != nil {
-			return loadFailedMsg{message: fmt.Sprintf("Home error: %v", err)}
+			return loadFailedMsg{message: fmt.Sprintf("%s error: %v", sec.Label, err)}
 		}
-		return collectionLoadedMsg{id: "__home__", title: "Home", tracks: tracks}
+		return collectionLoadedMsg{
+			id:       collectionID(sec.ID),
+			title:    sec.Label,
+			tracks:   tracks,
+			isFlow:   sec.Kind == provider.SectionRadio,
+			autoplay: autoplay,
+		}
 	}
 }
 
-func loadFlowCmd(loader Loader, index int, append bool, autoplay bool) tea.Cmd {
-	if loader == nil {
-		return nil
-	}
+func loadRadioPageCmd(radio provider.InfiniteRadio, sec provider.Section, offset int, autoplay bool) tea.Cmd {
 	return func() tea.Msg {
-		tracks, err := loader.LoadFlow(context.Background(), index)
+		tracks, err := radio.LoadRadioPage(context.Background(), sec.ID, offset)
 		if err != nil {
-			return loadFailedMsg{message: fmt.Sprintf("Flow error: %v", err)}
+			return loadFailedMsg{message: fmt.Sprintf("%s error: %v", sec.Label, err)}
 		}
-		return collectionLoadedMsg{id: "__flow__", title: "Flow", tracks: tracks, isFlow: true, append: append, autoplay: autoplay}
+		return collectionLoadedMsg{id: collectionID(sec.ID), title: sec.Label, tracks: tracks, isFlow: true, append: true, autoplay: autoplay}
 	}
 }
 
-func loadExploreCmd(loader Loader) tea.Cmd {
-	if loader == nil {
+func loadPlaylistCmd(p provider.Provider, id string, title string) tea.Cmd {
+	if p == nil {
 		return nil
 	}
 	return func() tea.Msg {
-		tracks, err := loader.LoadExplore(context.Background())
-		if err != nil {
-			return loadFailedMsg{message: fmt.Sprintf("Explore error: %v", err)}
-		}
-		return collectionLoadedMsg{id: "__explore__", title: "Explore", tracks: tracks}
-	}
-}
-
-func loadFavoritesCmd(loader Loader) tea.Cmd {
-	if loader == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		tracks, err := loader.LoadFavorites(context.Background())
-		if err != nil {
-			return loadFailedMsg{message: fmt.Sprintf("Favorites error: %v", err)}
-		}
-		return collectionLoadedMsg{id: "__favorites__", title: "Favorites", tracks: tracks}
-	}
-}
-
-func loadPlaylistCmd(loader Loader, id string, title string) tea.Cmd {
-	if loader == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		tracks, err := loader.LoadPlaylist(context.Background(), id)
+		tracks, err := p.LoadPlaylist(context.Background(), id)
 		if err != nil {
 			return loadFailedMsg{message: fmt.Sprintf("Playlist error: %v", err)}
 		}
@@ -224,14 +138,14 @@ func loadPlaylistCmd(loader Loader, id string, title string) tea.Cmd {
 	}
 }
 
-func searchCmd(loader Loader, requestID int, query string) tea.Cmd {
-	if loader == nil {
+func searchCmd(p provider.Provider, requestID int, query string) tea.Cmd {
+	if p == nil {
 		return nil
 	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
 		defer cancel()
-		results, err := loader.Search(ctx, query)
+		results, err := p.Search(ctx, query)
 		if err != nil {
 			return searchFailedMsg{requestID: requestID, message: fmt.Sprintf("Search error: %v", err)}
 		}

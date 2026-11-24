@@ -9,18 +9,18 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
-	"github.com/sfate/amp-tui/internal/deezer"
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
 func (m *Model) onBootstrapFailed(msg bootstrapFailedMsg) tea.Cmd {
 	m.ready = true
-	if errors.Is(msg.err, deezer.ErrUnauthenticated) {
+	if errors.Is(msg.err, provider.ErrUnauthenticated) {
 		m.startLogin()
 		m.bootstrapFailed = false
 		m.shutdownRuntime()
-		m.loader = nil
+		m.provider = nil
 		m.runtime = nil
-		m.app.StatusMessage = "Saved Deezer session expired or was rejected. Press Enter to sign in again"
+		m.app.StatusMessage = fmt.Sprintf("Saved %s session expired or was rejected. Press Enter to sign in again", m.providerName())
 	} else {
 		m.bootstrapFailed = true
 		m.app.StatusMessage = fmt.Sprintf("Bootstrap error: %v. Press Enter to retry or O to sign in", msg.err)
@@ -33,7 +33,7 @@ func (m *Model) onBootstrapLoaded(msg bootstrapLoadedMsg) tea.Cmd {
 	m.app.Playlists = msg.playlists
 	m.app.PlaylistState.Select(intPtr(0))
 	m.app.StatusMessage = fmt.Sprintf("Loaded %d playlists", len(msg.playlists))
-	return loadHomeCmd(m.loader)
+	return m.loadInitialSection()
 }
 
 func (m *Model) onCollectionLoaded(msg collectionLoadedMsg) tea.Cmd {
@@ -46,6 +46,7 @@ func (m *Model) onCollectionLoaded(msg collectionLoadedMsg) tea.Cmd {
 		m.cancelActiveSearch()
 		m.app.FlowNextIndex = len(msg.tracks)
 		m.app.IsFlowQueue = true
+		m.app.FlowCollectionID = msg.id
 		trackID := m.app.LoadFlowTracks(msg.tracks, msg.autoplay)
 		m.ready = true
 		m.app.StatusMessage = fmt.Sprintf("Loaded %s (%d tracks)", msg.title, len(msg.tracks))
@@ -58,7 +59,7 @@ func (m *Model) onCollectionLoaded(msg collectionLoadedMsg) tea.Cmd {
 
 	m.loadCollection(msg.id, msg.title, msg.tracks)
 	m.ready = true
-	if msg.id == "__home__" {
+	if m.isInitialSection(msg.id) {
 		m.app.ActivePanel = app.ActivePanelNavigation
 	}
 	return m.prebufferTrackWindowFrom(msg.tracks, 0)
@@ -69,11 +70,11 @@ func (m *Model) appendFlowTracks(msg collectionLoadedMsg) tea.Cmd {
 	result := m.app.AppendFlowTracks(msg.tracks, msg.autoplay)
 	m.app.FlowLoadingMore = false
 	if result.AppendedCount == 0 {
-		m.app.StatusMessage = "Flow returned no new tracks"
+		m.app.StatusMessage = fmt.Sprintf("%s returned no new tracks", msg.title)
 		return nil
 	}
 	m.app.FlowNextIndex += len(msg.tracks)
-	m.app.StatusMessage = fmt.Sprintf("Appended %d Flow tracks", result.AppendedCount)
+	m.app.StatusMessage = fmt.Sprintf("Appended %d %s tracks", result.AppendedCount, msg.title)
 	if result.AutoplayTrackID != nil {
 		return m.startTrackPlayback(*result.AutoplayTrackID)
 	}
@@ -100,7 +101,7 @@ func (m *Model) loadCollection(id, title string, tracks []app.Track) {
 	flowNextIndex := m.app.FlowNextIndex
 	m.app.CurrentPlaylistID = stringPtr(id)
 	m.app.CurrentTracks = append([]app.Track(nil), tracks...)
-	if id == "__favorites__" {
+	if m.viewingFavorites() {
 		m.applyFavoritesSort()
 	}
 	m.app.MainState.Select(intPtr(0))
@@ -125,7 +126,7 @@ func (m *Model) loadCollection(id, title string, tracks []app.Track) {
 }
 
 func (m *Model) toggleFavoritesSort() bool {
-	if m.app.CurrentPlaylistID == nil || *m.app.CurrentPlaylistID != "__favorites__" || len(m.app.CurrentTracks) == 0 {
+	if !m.viewingFavorites() || len(m.app.CurrentTracks) == 0 {
 		return false
 	}
 	m.favoritesSortAsc = !m.favoritesSortAsc
@@ -173,7 +174,7 @@ func (m Model) currentCollectionOwnsQueue() bool {
 
 func (m Model) renderSidebar(width, height int) string {
 	nav := []string{sectionHeading("Browse", activePalette.Blue)}
-	items := app.NavItems
+	items := m.app.NavItems
 	selectedNav := derefOrZero(m.app.NavState.Selected())
 	for i, item := range items {
 		selected := i == selectedNav && m.app.ActivePanel == app.ActivePanelNavigation
@@ -198,7 +199,7 @@ func (m Model) renderMain(width, height int) string {
 	case m.app.ViewingSettings:
 		title = "Settings"
 	case m.app.CurrentPlaylistID != nil:
-		title = displayCollectionTitle(*m.app.CurrentPlaylistID)
+		title = m.collectionTitle(*m.app.CurrentPlaylistID)
 	default:
 		title = "Browse"
 	}
@@ -216,7 +217,7 @@ func (m Model) renderMain(width, height int) string {
 		selected := derefOrZero(m.app.MainState.Selected())
 		playAll := trackRow(" Play Collection", selected == 0, activePalette.Yellow)
 		lines = append(lines, playAll)
-		if m.app.CurrentPlaylistID != nil && *m.app.CurrentPlaylistID == "__favorites__" {
+		if m.viewingFavorites() {
 			lines = append(lines, paint(fmt.Sprintf(" Sort: added date %s", ternary(m.favoritesSortAsc, "asc", "desc")), activePalette.TextMuted, ""))
 		}
 		lines = append(lines, "")
@@ -237,23 +238,4 @@ func (m Model) renderMain(width, height int) string {
 	}
 
 	return m.renderPanel(title, strings.Join(lines, "\n"), m.app.ActivePanel == app.ActivePanelMain || m.app.ActivePanel == app.ActivePanelSearch, width, height)
-}
-
-func displayCollectionTitle(id string) string {
-	switch id {
-	case "__home__":
-		return "Home"
-	case "__flow__":
-		return "Flow"
-	case "__explore__":
-		return "Explore"
-	case "__favorites__":
-		return "Favorites"
-	case "__search__":
-		return "Search"
-	case "":
-		return "Browse"
-	default:
-		return id
-	}
 }
