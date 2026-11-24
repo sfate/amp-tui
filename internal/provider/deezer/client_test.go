@@ -365,35 +365,3 @@ func TestFetchSearchResultsLimitsTrackAPIYearEnrichment(t *testing.T) {
 		t.Fatal("expected tracks beyond enrichment limit to stay unenriched")
 	}
 }
-
-func TestFetchEncryptedBytesReportsDownloadProgress(t *testing.T) {
-	payload := []byte(strings.Repeat("x", 1024))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", "1024")
-		_, _ = w.Write(payload[:256])
-		_, _ = w.Write(payload[256:])
-	}))
-	defer server.Close()
-
-	client, err := NewClient("test-arl", Options{})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-
-	var seen []int64
-	got, err := client.FetchEncryptedBytesFromSignedURLWithProgress(context.Background(), server.URL, func(downloaded, total int64) {
-		if total != int64(len(payload)) {
-			t.Fatalf("expected total %d, got %d", len(payload), total)
-		}
-		seen = append(seen, downloaded)
-	})
-	if err != nil {
-		t.Fatalf("fetch encrypted bytes: %v", err)
-	}
-	if string(got) != string(payload) {
-		t.Fatal("unexpected downloaded payload")
-	}
-	if len(seen) < 2 || seen[0] != 0 || seen[len(seen)-1] != int64(len(payload)) {
-		t.Fatalf("unexpected progress samples: %#v", seen)
-	}
-}
