@@ -63,6 +63,33 @@ func (m *Model) handleMediaControlCommand(command playback.MediaCommand) tea.Cmd
 			return nil
 		}
 		return m.playCurrentQueueTrackOrResume()
+	case playback.MediaStop:
+		if m.session != nil {
+			m.session.Stop()
+			m.session = nil
+		}
+		m.nextPlaybackID++
+		m.currentPlayID = 0
+		m.app.IsPlaying = false
+		m.progress.active = false
+		m.app.AutoTransitionArmed = false
+		m.app.StatusMessage = "Stopped"
+		m.syncMediaControl()
+	case playback.MediaSetVolume:
+		m.setVolume(int(command.Volume*100 + 0.5))
+	case playback.MediaSetLoopStatus:
+		switch command.LoopStatus {
+		case "None":
+			m.app.RepeatMode = app.RepeatModeOff
+		case "Track":
+			m.app.RepeatMode = app.RepeatModeOne
+		case "Playlist":
+			m.app.RepeatMode = app.RepeatModeAll
+		default:
+			return nil
+		}
+		m.app.StatusMessage = fmt.Sprintf("Repeat: %s", repeatModeLabel(m.app.RepeatMode))
+		m.syncMediaControl()
 	case playback.MediaNext:
 		return m.handleNext()
 	case playback.MediaPrevious:
@@ -110,6 +137,7 @@ func (m Model) syncMediaControl() {
 		CanNext:     m.canGoNext(),
 		CanPrevious: m.canGoPrevious(),
 		CanSeek:     m.app.NowPlaying != nil && m.currentQuality.Seekable,
+		LoopStatus:  mprisLoopStatus(m.app.RepeatMode),
 	}
 	if now := m.app.NowPlaying; now != nil {
 		state.TrackID = now.ID
@@ -122,6 +150,17 @@ func (m Model) syncMediaControl() {
 		}
 	}
 	media.UpdateMediaState(state)
+}
+
+func mprisLoopStatus(mode app.RepeatMode) string {
+	switch mode {
+	case app.RepeatModeAll:
+		return "Playlist"
+	case app.RepeatModeOne:
+		return "Track"
+	default:
+		return "None"
+	}
 }
 
 func (m Model) canGoNext() bool {
@@ -179,7 +218,10 @@ func (m *Model) handlePrevious() tea.Cmd {
 }
 
 func (m *Model) adjustVolume(delta int) {
-	next := int(m.app.Volume) + delta
+	m.setVolume(int(m.app.Volume) + delta)
+}
+
+func (m *Model) setVolume(next int) {
 	if next < 0 {
 		next = 0
 	}
