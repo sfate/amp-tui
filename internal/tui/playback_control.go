@@ -212,7 +212,7 @@ func (m *Model) stopCurrentSession() {
 	if m.session == nil {
 		return
 	}
-	if m.app.Config.CrossfadeEnabled && m.app.Config.CrossfadeDurationMS > 0 {
+	if !m.caps.ManagedAudio && m.app.Config.CrossfadeEnabled && m.app.Config.CrossfadeDurationMS > 0 {
 		go m.session.FadeOutStop(time.Duration(m.app.Config.CrossfadeDurationMS) * time.Millisecond)
 		return
 	}

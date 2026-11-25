@@ -8,6 +8,7 @@ type Capabilities struct {
 	Login         bool
 	Radio         bool
 	Favorites     bool
+	ManagedAudio  bool
 }
 
 // CapabilitiesOf gives the zero value for a nil provider.
@@ -16,6 +17,10 @@ func CapabilitiesOf(p Provider) Capabilities {
 		return Capabilities{}
 	}
 	var c Capabilities
+	if managed, ok := p.(interface{ ManagedAudio() bool }); ok {
+		c.ManagedAudio = managed.ManagedAudio()
+		c.Playback = c.Playback || c.ManagedAudio
+	}
 	if streams, ok := p.(StreamSource); ok {
 		c.Playback = true
 		c.QualityLadder = len(streams.Qualities()) > 1
