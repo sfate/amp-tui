@@ -30,6 +30,19 @@ func TestMPVArgumentsKeepPlaybackHeadlessAndIsolated(t *testing.T) {
 	}
 }
 
+func TestMPVHeadersAreSortedAndRejectLineBreaks(t *testing.T) {
+	got := mpvHeaders(map[string]string{
+		"Referer":    "https://music.youtube.com/",
+		"User-Agent": "fixture",
+		"X-Bad":      "ok\r\nInjected: yes",
+		"Bad\nName":  "value",
+	})
+	want := []string{"Referer: https://music.youtube.com/", "User-Agent: fixture"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("mpvHeaders = %q, want %q", got, want)
+	}
+}
+
 func TestPlaybackRestartReportsTrackOnce(t *testing.T) {
 	var changes int
 	var gotMS uint64

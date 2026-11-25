@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/sfate/amp-tui/internal/app"
+	"github.com/sfate/amp-tui/internal/provider"
 )
 
 const searchTimeout = 20 * time.Second
@@ -172,7 +173,7 @@ func (m *Model) startSearch(query string) tea.Cmd {
 }
 
 func (m Model) appendSearchResultRows(lines []string, width, height int) []string {
-	lines = append(lines, renderSearchTabs(m.app.SearchCategory))
+	lines = append(lines, renderSearchTabsForProvider(m.app.SearchCategory, m.providerID))
 	lines = append(lines, "")
 	selected := derefOrZero(m.app.MainState.Selected())
 	switch m.app.SearchCategory {
@@ -308,12 +309,20 @@ func formatSearchTrackRow(index int, track app.Track, widths searchTrackColumnWi
 }
 
 func renderSearchTabs(category app.SearchCategory) string {
+	return renderSearchTabsForProvider(category, "")
+}
+
+func renderSearchTabsForProvider(category app.SearchCategory, providerID provider.ID) string {
+	playlistLabel := "Playlists"
+	if providerID == "youtube" {
+		playlistLabel = "Albums"
+	}
 	tabs := []struct {
 		label string
 		value app.SearchCategory
 	}{
 		{label: "Tracks", value: app.SearchCategoryTracks},
-		{label: "Playlists", value: app.SearchCategoryPlaylists},
+		{label: playlistLabel, value: app.SearchCategoryPlaylists},
 		{label: "Artists", value: app.SearchCategoryArtists},
 	}
 	parts := make([]string, 0, len(tabs))

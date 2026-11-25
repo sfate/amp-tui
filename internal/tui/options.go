@@ -14,7 +14,7 @@ type options struct {
 	secrets          secrets.Store
 	providerOverride provider.ID
 	engine           playback.Engine
-	engineFactory    func(config.PlaybackEngine) playback.Engine
+	engineFactory    func(config.PlaybackEngine, provider.ID) playback.Engine
 }
 
 // WithRegistry sets the providers the TUI can sign in to; main builds it.
@@ -38,7 +38,7 @@ func WithEngine(e playback.Engine) Option {
 }
 
 // WithEngineFactory lets the global engine setting select a new engine without coupling the TUI to implementations.
-func WithEngineFactory(factory func(config.PlaybackEngine) playback.Engine) Option {
+func WithEngineFactory(factory func(config.PlaybackEngine, provider.ID) playback.Engine) Option {
 	return func(o *options) { o.engineFactory = factory }
 }
 

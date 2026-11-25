@@ -53,6 +53,12 @@ func (m *Model) activateProvider(id provider.ID) tea.Cmd {
 	m.resetProviderState()
 	m.providerID = id
 	m.app.Config.Provider = string(id)
+	if m.engineFactory != nil {
+		selected := m.engineFactory(m.app.Config.Engine, id)
+		if m.engine == nil || m.engine.Name() != selected.Name() {
+			m.engine = selected
+		}
+	}
 	m.factory, _ = m.registry.Lookup(id)
 	m.setCatalog(catalogInfo{name: m.registry.Name(id)})
 	m.setProvider(nil)
@@ -74,9 +80,13 @@ func (m *Model) activateProvider(id provider.ID) tea.Cmd {
 	if instance != nil {
 		m.setCatalog(catalogInfoOf(instance))
 	}
+	anonymousAccess := false
+	if anonymous, ok := instance.(provider.AnonymousProvider); ok {
+		anonymousAccess = anonymous.SupportsAnonymousAccess()
+	}
 
 	switch {
-	case err == nil && (m.catalog.auth == nil || strings.TrimSpace(credential) != ""):
+	case err == nil && (m.catalog.auth == nil || strings.TrimSpace(credential) != "" || anonymousAccess):
 		m.setProvider(instance)
 		m.runtime = newPlayerRuntime(m.engine, instance)
 		m.ready = false

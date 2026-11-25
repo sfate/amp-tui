@@ -118,7 +118,7 @@ func TestEngineSettingSwitchesInjectedEngineAndStopsPlayback(t *testing.T) {
 	var saved config.Config
 	model.saveConfig = func(cfg config.Config) error { saved = cfg; return nil }
 	var selected []config.PlaybackEngine
-	model.engineFactory = func(choice config.PlaybackEngine) playback.Engine {
+	model.engineFactory = func(choice config.PlaybackEngine, _ provider.ID) playback.Engine {
 		selected = append(selected, choice)
 		return newFakeEngine()
 	}

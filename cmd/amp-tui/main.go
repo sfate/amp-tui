@@ -16,6 +16,7 @@ import (
 	"github.com/sfate/amp-tui/internal/playback/enginefactory"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/provider/deezer"
+	"github.com/sfate/amp-tui/internal/provider/youtube"
 	"github.com/sfate/amp-tui/internal/secrets"
 	"github.com/sfate/amp-tui/internal/tui"
 )
@@ -89,13 +90,19 @@ func run(args []string) error {
 	}
 	if o.doctor {
 		checks := doctor.PlatformChecks()
-		if cfg.Engine != config.EngineNative {
-			checks = append(checks, doctor.MPVCheck(cfg.Engine != config.EngineMPV))
+		youtubeActive := cfg.Provider == string(youtube.ID) || o.provider == youtube.ID
+		if cfg.Engine != config.EngineNative || youtubeActive {
+			checks = append(checks, doctor.MPVCheck(!youtubeActive && cfg.Engine != config.EngineMPV))
 		}
+		checks = append(checks, doctor.YTDLPCheck(!youtubeActive), doctor.DenoCheck(!youtubeActive))
 		checks = append(checks, doctor.SecretStoreCheck(secrets.NewKeyring(), secretsPath))
 		return doctor.Run(context.Background(), os.Stdout, checks)
 	}
-	model := tui.New(tui.WithEngine(enginefactory.Select(cfg.Engine)), tui.WithEngineFactory(enginefactory.Select), tui.WithRegistry(reg), tui.WithSecrets(secrets.Default(secretsPath)), tui.WithProviderOverride(o.provider))
+	selectedProvider := provider.ID(cfg.Provider)
+	if o.provider != "" {
+		selectedProvider = o.provider
+	}
+	model := tui.New(tui.WithEngine(enginefactory.Select(cfg.Engine, selectedProvider)), tui.WithEngineFactory(enginefactory.Select), tui.WithRegistry(reg), tui.WithSecrets(secrets.Default(secretsPath)), tui.WithProviderOverride(o.provider))
 	_, err = tea.NewProgram(model).Run()
 	return err
 }
@@ -103,6 +110,7 @@ func run(args []string) error {
 func newRegistry() *provider.Registry {
 	reg := provider.NewRegistry()
 	deezer.Register(reg)
+	youtube.Register(reg)
 	return reg
 }
 

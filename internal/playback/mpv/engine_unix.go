@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,7 +47,7 @@ type mpvProcess struct {
 	client *ipcClient
 }
 
-func startMPV(ctx context.Context, binary, socketPath, streamURL string, startMS uint64, paused bool, volume float32) (*mpvProcess, error) {
+func startMPV(ctx context.Context, binary, socketPath, streamURL string, startMS uint64, paused bool, volume float32, headers map[string]string) (*mpvProcess, error) {
 	cmd := exec.CommandContext(ctx, binary, mpvArguments(socketPath)...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
@@ -83,11 +85,16 @@ func startMPV(ctx context.Context, binary, socketPath, streamURL string, startMS
 	}{
 		{[]any{"set_property", "volume", float64(volume) * 100}},
 		{[]any{"set_property", "pause", paused}},
-		{[]any{"observe_property", 1, "time-pos"}},
-		{[]any{"observe_property", 2, "duration"}},
-		{[]any{"observe_property", 3, "af-metadata/astats"}},
-		{[]any{"loadfile", streamURL, "replace", "start=" + seconds(startMS)}},
 	}
+	if fields := mpvHeaders(headers); len(fields) > 0 {
+		setup = append(setup, struct{ command []any }{[]any{"set_property", "http-header-fields", fields}})
+	}
+	setup = append(setup,
+		struct{ command []any }{[]any{"observe_property", 1, "time-pos"}},
+		struct{ command []any }{[]any{"observe_property", 2, "duration"}},
+		struct{ command []any }{[]any{"observe_property", 3, "af-metadata/astats"}},
+		struct{ command []any }{[]any{"loadfile", streamURL, "replace", "start=" + seconds(startMS)}},
+	)
 	for _, item := range setup {
 		if err := process.client.command(ctx, item.command...); err != nil {
 			process.stop()
@@ -95,6 +102,22 @@ func startMPV(ctx context.Context, binary, socketPath, streamURL string, startMS
 		}
 	}
 	return process, nil
+}
+
+func mpvHeaders(headers map[string]string) []string {
+	keys := make([]string, 0, len(headers))
+	for key, value := range headers {
+		if strings.ContainsAny(key+value, "\r\n") {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fields := make([]string, 0, len(keys))
+	for _, key := range keys {
+		fields = append(fields, key+": "+headers[key])
+	}
+	return fields
 }
 
 func seconds(ms uint64) string {
@@ -130,6 +153,7 @@ type mpvSession struct {
 	directory string
 	socket    string
 	stream    *sourceServer
+	streamURL string
 	source    provider.Source
 	handler   playback.EventHandler
 	startMS   uint64
@@ -154,38 +178,49 @@ func startSession(ctx context.Context, binary string, source provider.Source, op
 	if binary == "" {
 		return nil, errors.New("mpv executable was not found on PATH")
 	}
-	if source.Bytes == nil {
-		return nil, errors.New("mpv playback requires a byte source")
-	}
 	if !source.Seekable {
 		opts.StartMS = 0
 	}
-	stream, err := newSourceServer(ctx, source)
-	if err != nil {
-		return nil, err
+	streamURL := source.URL
+	var stream *sourceServer
+	if source.Bytes != nil {
+		var err error
+		stream, err = newSourceServer(ctx, source)
+		if err != nil {
+			return nil, err
+		}
+		streamURL = stream.URL
+	} else if streamURL == "" {
+		return nil, errors.New("mpv playback requires a byte source or direct URL")
 	}
 	directory, err := os.MkdirTemp("", "amp-")
 	if err != nil {
-		_ = stream.Close()
+		if stream != nil {
+			_ = stream.Close()
+		}
 		return nil, fmt.Errorf("create private mpv socket directory: %w", err)
 	}
 	if err := os.Chmod(directory, 0o700); err != nil {
-		_ = stream.Close()
+		if stream != nil {
+			_ = stream.Close()
+		}
 		_ = os.RemoveAll(directory)
 		return nil, fmt.Errorf("secure mpv socket directory: %w", err)
 	}
 	sessionCtx, cancel := context.WithCancel(ctx)
 	session := &mpvSession{
 		ctx: sessionCtx, cancel: cancel, binary: binary, directory: directory,
-		socket: filepath.Join(directory, "ipc.sock"), stream: stream,
+		socket: filepath.Join(directory, "ipc.sock"), stream: stream, streamURL: streamURL,
 		source: source, handler: handler, startMS: opts.StartMS,
 		paused: opts.Paused, volume: 1, lastMS: opts.StartMS,
 		durationMS: source.Info.DurationMS, done: make(chan struct{}),
 	}
-	process, err := startMPV(sessionCtx, binary, session.socket, stream.URL, opts.StartMS, opts.Paused, session.volume)
+	process, err := startMPV(sessionCtx, binary, session.socket, session.streamURL, opts.StartMS, opts.Paused, session.volume, source.HTTPHeaders)
 	if err != nil {
 		cancel()
-		_ = stream.Close()
+		if stream != nil {
+			_ = stream.Close()
+		}
 		_ = os.RemoveAll(directory)
 		return nil, err
 	}
@@ -299,7 +334,7 @@ func (s *mpvSession) restart() (*mpvProcess, error) {
 	paused, volume := s.paused, s.volume
 	s.mu.Unlock()
 	_ = os.Remove(s.socket)
-	process, err := startMPV(s.ctx, s.binary, s.socket, s.stream.URL, position, paused, volume)
+	process, err := startMPV(s.ctx, s.binary, s.socket, s.streamURL, position, paused, volume, s.source.HTTPHeaders)
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +462,9 @@ func (s *mpvSession) cleanup() {
 	s.mu.Unlock()
 	process.stop()
 	s.cancel()
-	_ = s.stream.Close()
+	if s.stream != nil {
+		_ = s.stream.Close()
+	}
 	_ = os.RemoveAll(s.directory)
 }
 

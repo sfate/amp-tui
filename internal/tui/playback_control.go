@@ -172,6 +172,9 @@ func (m Model) currentPlaybackPositionMS() uint64 {
 
 func (m *Model) retryPlaybackAfterError(err error) tea.Cmd {
 	trackID := strings.TrimSpace(m.currentTrackID)
+	if invalidator, ok := m.provider.(provider.ResolvedSourceInvalidator); ok && trackID != "" {
+		invalidator.InvalidateResolvedSource(trackID)
+	}
 	if trackID == "" {
 		m.app.IsPlaying = false
 		m.app.StatusMessage = fmt.Sprintf("Playback error: %v", err)
