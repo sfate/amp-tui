@@ -23,6 +23,22 @@ Terminal music player written in Go with Bubble Tea. It started as [deezer-tui](
 - Linux/other playback through the Go audio backend
 - Theme support: Aetheria, Gruvbox, Winamp, Deezer Dark, Deezer Classic, and Deezer Orange
 
+## Providers
+
+| Provider | Availability | Sign-in | Catalog and playback |
+| --- | --- | --- | --- |
+| Deezer | macOS, Linux | Browser session or ARL/Cookie | Home, Flow, Explore, Favorites, playlists; search tracks, playlists, artists; 128/320 kbps and FLAC |
+| YouTube Music | macOS, Linux | Optional browser profile or cookies.txt | Anonymous song/album search; signed-in recommendations, liked tracks, watch later, playlists; audio-only via mpv |
+| Apple Music | macOS | Local Music.app permission | Local library and playlists; Music.app owns audio output |
+
+| Provider | Playback | Seek | Quality ladder | Provider-specific sections |
+| --- | --- | --- | --- | --- |
+| Deezer | amp-tui audio engine | Yes; FLAC is limited | 128 kbps, 320 kbps, FLAC | Home, Flow, Explore, Favorites |
+| YouTube Music | mpv, audio-only | Yes | One best-audio choice | Recommended, Liked, Watch later when signed in |
+| Apple Music | Managed by Music.app | Yes | Not applicable | Local Library |
+
+Credentials for signed-in providers use the OS keychain when available, with a mode 0600 file fallback. Spotify integration is postponed. Video playback is out of scope. See [provider details](docs/providers.md), [architecture](docs/architecture.md), and the [manual smoke checklist](docs/smoke-tests.md).
+
 > [!NOTE]
 > Discord Rich Presence is intentionally not implemented.
 
@@ -96,7 +112,7 @@ make audit
 make test
 ```
 
-## Login
+## Deezer login
 
 On first launch, `amp-tui` opens a login screen instead of requiring manual config edits. Saved sessions are validated on startup. If Deezer rejects a saved session, the login screen opens again. Other startup failures show an error with `Enter` to retry or `O` to sign in. If you already have a saved session and want to replace it, press `O` from the app to open the same login flow.
 
@@ -117,6 +133,17 @@ Open `Settings` from the Browse list. The rows are:
 - `Account`: shows `Signed in` or `Not signed in`. `Enter` signs out (deletes the saved login and opens the login screen) or signs in. Providers without a login do not show this row.
 - Theme, Volume, Crossfade, Duration, Display, Compact View: global settings.
 - Settings of the active provider, such as `Quality`.
+
+## Provider controls
+
+| Key | Action | Availability |
+| --- | --- | --- |
+| `,` / `.` | Seek back/forward 10 seconds | Providers/engines with seek; FLAC seek is limited |
+| `U` / `I` | Lower/raise quality | Deezer's quality ladder |
+| `+` / `-` | Change volume | Playback engine dependent |
+| `O` | Sign in to the active provider | Providers that support sign-in |
+
+Other common controls are listed above. Features and search categories vary by provider; unsupported provider-only items are hidden. See [provider controls and sign-in](docs/providers.md#sign-in-and-switch-providers).
 
 ## Configuration
 
@@ -162,7 +189,6 @@ Tagged `v*` releases are built with GoReleaser for macOS (Intel and Apple Silico
 
 - [] Add lyrics loading and a lyrics view
 - [] Improve FLAC seeking, or keep documenting FLAC as restart-only for seek/quality transitions
-- [] Add broader manual smoke-test documentation for macOS Control Center/media keys
 - [] Harden Deezer payload parsing for API shape changes
 
 ## Kudos
