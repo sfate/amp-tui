@@ -5,6 +5,7 @@ package mediactl
 import (
 	"bufio"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +80,7 @@ func TestMPRISExportsPlayerctlCommandsAndProperties(t *testing.T) {
 	defer controller.Close()
 	controller.UpdateMediaState(playback.MediaState{
 		Playing: true, TrackID: "track-1", Title: "Song", Artist: "Artist",
-		PositionMS: 2_000, DurationMS: 90_000, Volume: 55, CanSeek: true,
+		PositionMS: 2_000, DurationMS: 90_000, Volume: 55, CanSeek: true, CanNext: true, CanPrevious: true,
 	})
 
 	client, err := dbus.SessionBus()
@@ -120,6 +121,31 @@ func TestMPRISExportsPlayerctlCommandsAndProperties(t *testing.T) {
 		t.Fatalf("set LoopStatus: %v", err)
 	}
 	assertMPRISCommand(t, controller.events, playback.MediaCommand{Kind: playback.MediaSetLoopStatus, LoopStatus: "Playlist"})
+
+	playerctl, err := exec.LookPath("playerctl")
+	if err == nil {
+		position, err := exec.Command(playerctl, "--player=amp_tui", "position").CombinedOutput()
+		if err != nil || strings.TrimSpace(string(position)) == "" {
+			t.Fatalf("playerctl position: %v: %s", err, position)
+		}
+		for _, test := range []struct {
+			args []string
+			want playback.MediaCommand
+		}{
+			{[]string{"play"}, playback.MediaCommand{Kind: playback.MediaPlay}},
+			{[]string{"pause"}, playback.MediaCommand{Kind: playback.MediaPause}},
+			{[]string{"play-pause"}, playback.MediaCommand{Kind: playback.MediaToggle}},
+			{[]string{"next"}, playback.MediaCommand{Kind: playback.MediaNext}},
+			{[]string{"previous"}, playback.MediaCommand{Kind: playback.MediaPrevious}},
+			{[]string{"position", "12"}, playback.MediaCommand{Kind: playback.MediaSetPosition, PositionMS: 12_000}},
+		} {
+			args := append([]string{"--player=amp_tui"}, test.args...)
+			if output, err := exec.Command(playerctl, args...).CombinedOutput(); err != nil {
+				t.Fatalf("playerctl %v: %v: %s", test.args, err, output)
+			}
+			assertMPRISCommand(t, controller.events, test.want)
+		}
+	}
 }
 
 func startPrivateSessionBus(t *testing.T) {
