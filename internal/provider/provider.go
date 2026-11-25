@@ -52,6 +52,12 @@ type Provider interface {
 	Search(ctx context.Context, query string) (SearchResult, error)
 }
 
+// ManagedAudioProvider plays tracks through a service-owned player instead of yielding audio bytes.
+type ManagedAudioProvider interface {
+	Provider
+	ManagedAudio() bool
+}
+
 // InfiniteRadio extends a SectionRadio list; offset is the count of tracks already loaded.
 type InfiniteRadio interface {
 	LoadRadioPage(ctx context.Context, sectionID string, offset int) ([]core.Track, error)

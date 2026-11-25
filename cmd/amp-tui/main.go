@@ -15,6 +15,7 @@ import (
 	"github.com/sfate/amp-tui/internal/doctor"
 	"github.com/sfate/amp-tui/internal/playback/enginefactory"
 	"github.com/sfate/amp-tui/internal/provider"
+	"github.com/sfate/amp-tui/internal/provider/applemusic"
 	"github.com/sfate/amp-tui/internal/provider/deezer"
 	"github.com/sfate/amp-tui/internal/provider/youtube"
 	"github.com/sfate/amp-tui/internal/secrets"
@@ -111,6 +112,7 @@ func newRegistry() *provider.Registry {
 	reg := provider.NewRegistry()
 	deezer.Register(reg)
 	youtube.Register(reg)
+	applemusic.Register(reg)
 	return reg
 }
 

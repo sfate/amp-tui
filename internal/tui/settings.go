@@ -33,7 +33,14 @@ func (m Model) settingsRows() []settingsRowID {
 	if m.catalog.auth != nil {
 		rows = append(rows, settingAccount)
 	}
-	rows = append(rows, settingEngine, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView)
+	if !m.caps.ManagedAudio {
+		rows = append(rows, settingEngine)
+	}
+	rows = append(rows, settingTheme, settingVolume)
+	if !m.caps.ManagedAudio {
+		rows = append(rows, settingCrossfade)
+	}
+	rows = append(rows, settingDuration, settingDisplay, settingCompactView)
 	if m.caps.QualityLadder {
 		rows = append(rows, settingQuality)
 	}

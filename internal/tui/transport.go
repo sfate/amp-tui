@@ -201,7 +201,7 @@ func (m *Model) cycleRepeatMode() {
 }
 
 func (m *Model) maybeStartCrossfadeTransition(currentMS, totalMS uint64) tea.Cmd {
-	if !m.app.Config.CrossfadeEnabled || m.app.Config.CrossfadeDurationMS == 0 {
+	if m.caps.ManagedAudio || !m.app.Config.CrossfadeEnabled || m.app.Config.CrossfadeDurationMS == 0 {
 		return nil
 	}
 	if m.app.AutoTransitionArmed || m.session == nil || m.app.QueueIndex == nil || len(m.app.QueueTracks) == 0 {

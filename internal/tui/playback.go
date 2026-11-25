@@ -37,6 +37,9 @@ type playerRuntime struct {
 
 // newPlayerRuntime is nil when nothing can play: no engine or a provider without streams.
 func newPlayerRuntime(engine playback.Engine, p provider.Provider) *playerRuntime {
+	if managed, ok := p.(interface{ PlaybackEngine() playback.Engine }); ok {
+		engine = managed.PlaybackEngine()
+	}
 	streams, ok := p.(provider.StreamSource)
 	if engine == nil || !ok {
 		return nil
