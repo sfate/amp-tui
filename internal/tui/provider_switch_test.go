@@ -207,7 +207,7 @@ func TestProviderOverrideIsNotSaved(t *testing.T) {
 func TestSettingsRowOrder(t *testing.T) {
 	isolateConfig(t)
 	model := NewWithConfig(config.Default(), WithRegistry(switchRegistry()), WithSecrets(signedInStore(t)))
-	want := []settingsRowID{settingProvider, settingAccount, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView, settingQuality}
+	want := []settingsRowID{settingProvider, settingAccount, settingEngine, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView, settingQuality}
 	if got := model.settingsRows(); !slices.Equal(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}
@@ -221,7 +221,7 @@ func TestSettingsRowOrder(t *testing.T) {
 	cfg := config.Default()
 	cfg.Provider = "plain"
 	plain := NewWithConfig(cfg, WithRegistry(switchRegistry()), WithSecrets(secrets.NewMemory()))
-	want = []settingsRowID{settingProvider, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView}
+	want = []settingsRowID{settingProvider, settingEngine, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView}
 	if got := plain.settingsRows(); !slices.Equal(got, want) {
 		t.Fatalf("plain rows = %v, want %v", got, want)
 	}
