@@ -5,27 +5,22 @@ package native
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	_ "embed"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/sfate/amp-tui/internal/core"
+	"github.com/sfate/amp-tui/internal/mediactl"
 	"github.com/sfate/amp-tui/internal/playback"
 	"github.com/sfate/amp-tui/internal/player"
 	"github.com/sfate/amp-tui/internal/provider"
 )
-
-//go:embed mac_player_helper.swift
-var macPlayerHelperSource string
 
 // Engine plays prepared temp files through the Swift helper, which also serves Now Playing.
 type Engine struct {
@@ -37,9 +32,10 @@ type Engine struct {
 }
 
 var (
-	_ playback.Engine          = (*Engine)(nil)
-	_ playback.Prebufferer     = (*Engine)(nil)
-	_ playback.MediaController = (*Engine)(nil)
+	_ playback.Engine             = (*Engine)(nil)
+	_ playback.Prebufferer        = (*Engine)(nil)
+	_ playback.MediaController    = (*Engine)(nil)
+	_ playback.MediaControlCloser = (*Engine)(nil)
 )
 
 // filePlayer is the helper side of a session; tests replace the helper process with it.
@@ -108,6 +104,12 @@ func (e *Engine) UpdateMediaState(state playback.MediaState) {
 		return
 	}
 	e.media.updateMediaControl(state)
+}
+
+func (e *Engine) CloseMediaControl() {
+	if e.media != nil {
+		e.media.close()
+	}
 }
 
 type darwinPlaybackSession struct {
@@ -356,6 +358,32 @@ func (m *darwinHelperManager) startAsync() {
 		defer m.mu.Unlock()
 		_ = m.ensureStartedLocked()
 	}()
+}
+
+func (m *darwinHelperManager) close() {
+	m.mu.Lock()
+	if m.stdin != nil {
+		_ = m.sendLocked("quit")
+		_ = m.stdin.Close()
+		m.stdin = nil
+	}
+	cmd, done := m.cmd, m.waitErrCh
+	m.mu.Unlock()
+	if cmd == nil || cmd.Process == nil || done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+	}
+	m.mu.Lock()
+	if m.cmd == cmd {
+		m.cmd = nil
+		m.waitErrCh = nil
+	}
+	m.mu.Unlock()
 }
 
 func (m *darwinHelperManager) play(path string, volume float32, seekMS uint64) (int, <-chan error, error) {
@@ -980,51 +1008,6 @@ func (w *downloadProgressWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-var (
-	macHelperOnce sync.Once
-	macHelperPath string
-	macHelperErr  error
-)
-
 func ensureMacPlayerHelper() (string, error) {
-	macHelperOnce.Do(func() {
-		cacheDir, err := os.UserCacheDir()
-		if err != nil {
-			macHelperErr = err
-			return
-		}
-		dir := filepath.Join(cacheDir, "amp-tui")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			macHelperErr = err
-			return
-		}
-		srcPath := filepath.Join(dir, "mac_player_helper.swift")
-		binPath := filepath.Join(dir, "mac-player-helper")
-		sumPath := filepath.Join(dir, "mac-player-helper.sha256")
-		sourceSum := fmt.Sprintf("%x", sha256.Sum256([]byte(macPlayerHelperSource)))
-		if info, err := os.Stat(binPath); err == nil && !info.IsDir() {
-			if existingSum, err := os.ReadFile(sumPath); err == nil && string(existingSum) == sourceSum {
-				macHelperPath = binPath
-				return
-			}
-		}
-		if err := os.WriteFile(srcPath, []byte(macPlayerHelperSource), 0o644); err != nil {
-			macHelperErr = err
-			return
-		}
-		cmd := exec.Command("/usr/bin/xcrun", "swiftc", "-O", "-o", binPath, srcPath)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			macHelperErr = fmt.Errorf("compile mac player helper: %w: %s", err, string(output))
-			return
-		}
-		if err := os.WriteFile(sumPath, []byte(sourceSum), 0o644); err != nil {
-			macHelperErr = err
-			return
-		}
-		macHelperPath = binPath
-	})
-	if macHelperErr != nil {
-		return "", macHelperErr
-	}
-	return macHelperPath, nil
+	return mediactl.EnsureHelper()
 }

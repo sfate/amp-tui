@@ -52,3 +52,8 @@ type MediaController interface {
 	MediaCommands() <-chan MediaCommand
 	UpdateMediaState(MediaState)
 }
+
+// MediaControlCloser releases an OS media-control helper when an engine runtime ends.
+type MediaControlCloser interface {
+	CloseMediaControl()
+}

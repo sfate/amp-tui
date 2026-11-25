@@ -88,4 +88,9 @@ func (r *playerRuntime) shutdown() {
 	if p, ok := r.prebufferer(); ok {
 		p.ClearPrebuffer()
 	}
+	if media, ok := r.mediaController(); ok {
+		if closer, ok := media.(playback.MediaControlCloser); ok {
+			closer.CloseMediaControl()
+		}
+	}
 }
