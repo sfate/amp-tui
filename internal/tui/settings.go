@@ -87,6 +87,7 @@ func (m *Model) adjustSelectedSetting(direction int) tea.Cmd {
 			m.session.Stop()
 			m.session = nil
 		}
+		m.shutdownRuntime()
 		m.nextPlaybackID++
 		m.currentPlayID = 0
 		m.app.IsPlaying = false

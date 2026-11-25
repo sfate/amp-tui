@@ -16,6 +16,7 @@ let warmupDurationSeconds: TimeInterval = 0.05
 let startupTrimSeconds: TimeInterval = 0.035
 let startupFadeSeconds: TimeInterval = 0.08
 let resumeFadeSeconds: TimeInterval = 0.03
+let controlOnly = CommandLine.arguments.contains("--control-only")
 
 func makeSilentWAV(duration: TimeInterval, sampleRate: Int = 44100) -> Data {
     let channels = 1
@@ -234,7 +235,7 @@ DispatchQueue.global(qos: .userInitiated).async {
         DispatchQueue.main.async {
             switch parts.first {
             case "play":
-                if parts.count >= 5, let token = Int(parts[1]), let volume = Float(parts[2]), let seekMS = Int(parts[3]) {
+                if !controlOnly, parts.count >= 5, let token = Int(parts[1]), let volume = Float(parts[2]), let seekMS = Int(parts[3]) {
                     playTrack(token: token, volume: volume, seekMS: seekMS, path: parts[4])
                 }
             case "pause":

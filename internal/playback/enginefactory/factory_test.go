@@ -21,13 +21,14 @@ func TestSelectEngineHonorsModeAndAutoFallback(t *testing.T) {
 	newMPV := func() playback.Engine { return namedEngine("mpv") }
 	newNative := func() playback.Engine { return namedEngine("native") }
 	for _, tc := range []struct {
-		name      string
-		setting   config.PlaybackEngine
-		available bool
-		want      string
-	}{{"auto prefers mpv", config.EngineAuto, true, "mpv"}, {"auto falls back", config.EngineAuto, false, "native"}, {"explicit mpv", config.EngineMPV, false, "mpv"}, {"explicit native", config.EngineNative, true, "native"}} {
+		name         string
+		setting      config.PlaybackEngine
+		preferNative bool
+		available    bool
+		want         string
+	}{{"auto prefers mpv", config.EngineAuto, false, true, "mpv"}, {"auto falls back", config.EngineAuto, false, false, "native"}, {"auto prefers native on macOS", config.EngineAuto, true, true, "native"}, {"explicit mpv", config.EngineMPV, true, false, "mpv"}, {"explicit native", config.EngineNative, false, true, "native"}} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := selectEngine(tc.setting, func() bool { return tc.available }, newMPV, newNative)
+			got := selectEngine(tc.setting, tc.preferNative, func() bool { return tc.available }, newMPV, newNative)
 			if got.Name() != tc.want {
 				t.Fatalf("selected %q, want %q", got.Name(), tc.want)
 			}
