@@ -1,14 +1,19 @@
 package doctor
 
-import "context"
+import (
+	"context"
+
+	"github.com/sfate/amp-tui/internal/mediactl"
+)
 
 // PlatformChecks returns the checks for macOS.
 func PlatformChecks() []Check {
 	return []Check{{
-		Name: "Swift compiler for the playback helper (xcrun swiftc)",
-		Hint: "Install the Xcode command line tools: xcode-select --install",
+		Name: "Prebuilt macOS media helper",
+		Hint: "Reinstall amp-tui from a release built for this architecture.",
 		Run: func(ctx context.Context) error {
-			return commandSucceeds(ctx, "/usr/bin/xcrun", "--find", "swiftc")
+			_, err := mediactl.EnsureHelper()
+			return err
 		},
 	}}
 }

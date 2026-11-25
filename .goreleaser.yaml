@@ -1,0 +1,57 @@
+version: 2
+
+project_name: amp-tui
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: amp-tui
+    main: ./cmd/amp-tui
+    binary: amp-tui
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+homebrew_casks:
+  - name: amp-tui
+    repository:
+      owner: sfate
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/sfate/amp-tui
+    description: Terminal music player with multiple audio providers
+    binaries:
+      - amp-tui
+    skip_upload: auto
+
+release:
+  github:
+    owner: sfate
+    name: amp-tui

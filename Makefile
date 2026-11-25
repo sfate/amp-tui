@@ -6,11 +6,6 @@ DEV_BUILD_OUTPUT ?= $(HOME)/.local/bin/$(BINARY_NAME)
 TEST_DIR ?= ./...
 TEST_CASE ?= ^.+$
 UNAME_S := $(shell uname -s)
-MAC_HELPER_SRC := internal/mediactl/mac_player_helper.swift
-MAC_HELPER_CACHE_DIR ?= $(HOME)/Library/Caches/amp-tui
-MAC_HELPER_SWIFT := $(MAC_HELPER_CACHE_DIR)/mac_player_helper.swift
-MAC_HELPER_BIN := $(MAC_HELPER_CACHE_DIR)/mac-player-helper
-MAC_HELPER_SUM := $(MAC_HELPER_CACHE_DIR)/mac-player-helper.sha256
 
 lint:
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run --allow-parallel-runners
@@ -23,12 +18,6 @@ test:
 
 build:
 	mkdir -p $(dir $(BUILD_OUTPUT))
-ifeq ($(UNAME_S),Darwin)
-	mkdir -p $(MAC_HELPER_CACHE_DIR)
-	cp $(MAC_HELPER_SRC) $(MAC_HELPER_SWIFT)
-	xcrun swiftc -O -o $(MAC_HELPER_BIN) $(MAC_HELPER_SWIFT)
-	printf "%s" "$$(shasum -a 256 $(MAC_HELPER_SRC) | awk '{print $$1}')" > $(MAC_HELPER_SUM)
-endif
 	go build -mod=readonly -o $(BUILD_OUTPUT) ./cmd/amp-tui
 
 dev-build: build
