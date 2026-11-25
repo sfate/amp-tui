@@ -1,6 +1,6 @@
 # amp-tui
 
-Terminal music player written in Go with Bubble Tea. It started as [deezer-tui](https://github.com/sfate/deezer-tui) and grows into one player with several backend providers: Deezer (available now), YouTube, Spotify and Apple Music (planned, see the issues).
+Terminal music player written in Go with Bubble Tea. It started as [deezer-tui](https://github.com/sfate/deezer-tui) and supports Deezer, YouTube Music audio, and the local Apple Music library on macOS. Spotify integration is postponed.
 
 <img src='images/preview-loading.png' width='550' alt='amp-tui loading' /> 
 
@@ -51,7 +51,7 @@ Q                  Quit
 
 ## Build From Source
 
-Requirements:
+Development build requirements:
 
 - Go `1.27.3` or newer
 - macOS only: Xcode command line tools for the Swift playback helper
@@ -62,7 +62,7 @@ Build the binary from the repository root:
 make build
 ```
 
-On macOS, `make build` also precompiles the native playback helper into the user cache.
+On macOS, `make build` builds the native playback helper at first use. Release binaries include a prebuilt helper for their architecture and do not need Xcode command line tools at runtime.
 
 The binary is written to:
 
@@ -154,13 +154,15 @@ Theme can be set in the config file or switched in-app. The default theme is Aet
 
 ![amp-tui preview](images/preview.png)
 
+## Releases
+
+Tagged `v*` releases are built with GoReleaser for macOS (Intel and Apple Silicon) and Linux (x86_64). macOS release archives include the prebuilt Swift playback helper. The Homebrew Cask publisher is configured for `sfate/homebrew-tap`; enabling it requires that tap repository and a `HOMEBREW_TAP_TOKEN` repository secret.
+
 ## TODO
 
-- [] Add Linux MPRIS/media-key support behind the same media-control abstraction used for macOS
 - [] Add lyrics loading and a lyrics view
 - [] Improve FLAC seeking, or keep documenting FLAC as restart-only for seek/quality transitions
 - [] Add broader manual smoke-test documentation for macOS Control Center/media keys
-- [] Improve packaging and release artifacts for macOS and Linux
 - [] Harden Deezer payload parsing for API shape changes
 
 ## Kudos
