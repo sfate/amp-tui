@@ -95,7 +95,7 @@ func (m *Model) adjustSelectedSetting(direction int) tea.Cmd {
 		m.progress.active = false
 		m.visualizer.reset()
 		if m.engineFactory != nil {
-			m.engine = m.engineFactory(m.app.Config.Engine)
+			m.engine = m.engineFactory(m.app.Config.Engine, m.providerID)
 			m.runtime = newPlayerRuntime(m.engine, m.provider)
 		}
 		m.app.StatusMessage = fmt.Sprintf("Engine: %s (playback stopped)", playbackEngineLabel(m.app.Config.Engine))

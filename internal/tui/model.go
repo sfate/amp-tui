@@ -41,7 +41,7 @@ type Model struct {
 	notice string
 
 	engine          playback.Engine
-	engineFactory   func(config.PlaybackEngine) playback.Engine
+	engineFactory   func(config.PlaybackEngine, provider.ID) playback.Engine
 	runtime         *playerRuntime
 	session         playback.Session
 	playbackEvents  chan tea.Msg

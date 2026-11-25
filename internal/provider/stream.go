@@ -21,7 +21,9 @@ type Source struct {
 	Quality core.Quality
 	Format  core.AudioFormat
 	URL     string
-	Bytes   ByteSource
+	// HTTPHeaders accompany a direct URL when the player opens it.
+	HTTPHeaders map[string]string
+	Bytes       ByteSource
 	// Seekable is false when playback must start at 0.
 	Seekable bool
 	// BytesPerSecond estimates the duration when Info has none.

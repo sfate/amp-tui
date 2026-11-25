@@ -29,6 +29,22 @@ func switchRegistry() *provider.Registry {
 	return reg
 }
 
+func anonymousRegistry() *provider.Registry {
+	reg := switchRegistry()
+	reg.Register("anonymous", "Anonymous", func(provider.Config) (provider.Provider, error) {
+		return anonymousAuthProvider{fakeLoader: &fakeLoader{}}, nil
+	})
+	return reg
+}
+
+type anonymousAuthProvider struct{ *fakeLoader }
+
+func (anonymousAuthProvider) ID() provider.ID { return "anonymous" }
+
+func (anonymousAuthProvider) Name() string { return "Anonymous" }
+
+func (anonymousAuthProvider) SupportsAnonymousAccess() bool { return true }
+
 func signedInStore(t *testing.T) secrets.Store {
 	t.Helper()
 	store := secrets.NewMemory()
@@ -148,6 +164,20 @@ func TestSwitchToAuthProviderWithoutCredentialOpensLogin(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatal("expected no bootstrap before login")
+	}
+}
+
+func TestAuthProviderCanStartWithoutCredentialWhenAnonymousAccessIsSupported(t *testing.T) {
+	isolateConfig(t)
+	cfg := config.Default()
+	cfg.Provider = "anonymous"
+	model := NewWithConfig(cfg, WithRegistry(anonymousRegistry()), WithSecrets(secrets.NewMemory()))
+
+	if model.provider == nil || model.login.active || model.ready {
+		t.Fatalf("expected anonymous provider bootstrap, provider %v login %v ready %v", model.provider, model.login.active, model.ready)
+	}
+	if model.catalog.auth == nil {
+		t.Fatal("expected optional authenticator metadata to remain available")
 	}
 }
 

@@ -83,6 +83,11 @@ type Authenticator interface {
 	Submit(ctx context.Context, stepID, input string) (string, error)
 }
 
+// AnonymousProvider may be used without the optional Authenticator credential.
+type AnonymousProvider interface {
+	SupportsAnonymousAccess() bool
+}
+
 // Config is the input of a Factory; the TUI fills it from the config file and the secrets store.
 type Config struct {
 	Settings config.ProviderSettings
@@ -90,6 +95,11 @@ type Config struct {
 	Credential string
 	// SaveCredential stores a replaced secret, such as a refreshed OAuth token.
 	SaveCredential func(string) error
+}
+
+// ResolvedSourceInvalidator drops a provider's cached URL after playback fails.
+type ResolvedSourceInvalidator interface {
+	InvalidateResolvedSource(trackID string)
 }
 
 // Factory returns a signed-out Provider when cfg has no Credential.
