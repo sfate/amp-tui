@@ -22,14 +22,19 @@ const (
 	MediaPlay MediaCommandKind = iota
 	MediaPause
 	MediaToggle
+	MediaStop
 	MediaNext
 	MediaPrevious
 	MediaSetPosition
+	MediaSetVolume
+	MediaSetLoopStatus
 )
 
 type MediaCommand struct {
 	Kind       MediaCommandKind
 	PositionMS uint64
+	Volume     float32
+	LoopStatus string
 }
 
 type MediaState struct {
@@ -45,6 +50,7 @@ type MediaState struct {
 	CanNext     bool
 	CanPrevious bool
 	CanSeek     bool
+	LoopStatus  string
 }
 
 // MediaController is an Engine that also drives the OS Now Playing widget and media keys.
