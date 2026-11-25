@@ -144,6 +144,36 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	}
 }
 
+func TestEngineDefaultsToAutoAndRoundTrips(t *testing.T) {
+	isolate(t)
+	if got := Default().Engine; got != EngineAuto {
+		t.Fatalf("default engine = %q, want %q", got, EngineAuto)
+	}
+	cfg := Default()
+	cfg.Engine = EngineMPV
+	if err := Save(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got.Engine != EngineMPV {
+		t.Fatalf("loaded engine = %q, want %q", got.Engine, EngineMPV)
+	}
+}
+
+func TestNormalizeEngineUsesAutoForUnknownValues(t *testing.T) {
+	for _, tc := range []struct {
+		input PlaybackEngine
+		want  PlaybackEngine
+	}{{EngineAuto, EngineAuto}, {EngineMPV, EngineMPV}, {EngineNative, EngineNative}, {"other", EngineAuto}, {"", EngineAuto}} {
+		if got := NormalizeEngine(tc.input); got != tc.want {
+			t.Errorf("NormalizeEngine(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func writeConfigFile(t *testing.T, data string) string {
 	t.Helper()
 	path, err := ConfigFilePath()

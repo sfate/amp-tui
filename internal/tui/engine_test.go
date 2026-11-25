@@ -110,3 +110,35 @@ func TestSeekWithEngineSeekMovesSession(t *testing.T) {
 		t.Fatalf("position = %d (base %d), want 40000", updated.app.NowPlaying.CurrentMS, updated.progress.baseMS)
 	}
 }
+
+func TestEngineSettingSwitchesInjectedEngineAndStopsPlayback(t *testing.T) {
+	isolateConfig(t)
+	engine := newFakeEngine()
+	model := NewWithProviderAndEngine(config.Default(), withStream(&fakeLoader{}), engine)
+	var saved config.Config
+	model.saveConfig = func(cfg config.Config) error { saved = cfg; return nil }
+	var selected []config.PlaybackEngine
+	model.engineFactory = func(choice config.PlaybackEngine) playback.Engine {
+		selected = append(selected, choice)
+		return newFakeEngine()
+	}
+	session, err := engine.Start(context.Background(), provider.Source{}, playback.StartOptions{}, playback.EventHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.session = session
+	model.app.IsPlaying = true
+	model.app.NowPlaying = &app.NowPlaying{ID: "playing"}
+	model.app.SettingsState.Select(intPtr(slices.Index(model.settingsRows(), settingEngine)))
+
+	model.adjustSelectedSetting(1)
+	if model.app.Config.Engine != config.EngineMPV || saved.Engine != config.EngineMPV {
+		t.Fatalf("engine config = %q, saved = %q; want mpv", model.app.Config.Engine, saved.Engine)
+	}
+	if !slices.Equal(selected, []config.PlaybackEngine{config.EngineMPV}) {
+		t.Fatalf("engine factory calls = %v, want [mpv]", selected)
+	}
+	if !engine.Sessions()[0].Stopped() || model.session != nil || model.app.IsPlaying || model.app.NowPlaying != nil {
+		t.Fatal("changing engines must stop and clear the active session")
+	}
+}

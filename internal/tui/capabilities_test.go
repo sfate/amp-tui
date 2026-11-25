@@ -67,7 +67,7 @@ func TestBareProviderKeysAnswerNotAvailable(t *testing.T) {
 func TestBareProviderSettingsHaveNoQualityRow(t *testing.T) {
 	model := NewWithProvider(config.Default(), bareProvider())
 	openSettings(&model)
-	want := []settingsRowID{settingProvider, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView}
+	want := []settingsRowID{settingProvider, settingEngine, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView}
 	if got := model.settingsRows(); !slices.Equal(got, want) {
 		t.Fatalf("settings rows = %v, want %v", got, want)
 	}
@@ -85,7 +85,7 @@ func TestBareProviderSettingsHaveNoQualityRow(t *testing.T) {
 }
 
 func TestBareProviderSettingsRowsStillAdjust(t *testing.T) {
-	for i := 1; i < 7; i++ {
+	for i := 1; i < 8; i++ {
 		model := NewWithProvider(config.Default(), bareProvider())
 		model.saveConfig = func(config.Config) error { return nil }
 		openSettings(&model)
@@ -112,14 +112,14 @@ func TestFullProviderKeepsDeezerControlsAndSettings(t *testing.T) {
 
 	openSettings(&model)
 	rows := model.settingsRows()
-	if len(rows) != 9 || rows[8] != settingQuality {
-		t.Fatalf("settings rows = %v, want 9 with quality last", rows)
+	if len(rows) != 10 || rows[9] != settingQuality {
+		t.Fatalf("settings rows = %v, want 10 with quality last", rows)
 	}
 	for range 10 {
 		model.app.HandleDown()
 	}
-	if got := derefOrZero(model.app.SettingsState.Selected()); got != 8 {
-		t.Fatalf("HandleDown stopped at %d, want 8", got)
+	if got := derefOrZero(model.app.SettingsState.Selected()); got != 9 {
+		t.Fatalf("HandleDown stopped at %d, want 9", got)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestLoginSuccessRecomputesCapabilities(t *testing.T) {
 	model := NewWithProvider(config.Default(), bareProvider())
 	model.saveConfig = func(config.Config) error { return nil }
 	model.onLoginSucceeded(loginSucceededMsg{secret: "token", provider: withStream(&fakeLoader{})})
-	if !model.caps.QualityLadder || len(model.settingsRows()) != 9 {
-		t.Fatalf("caps = %+v, rows = %v; want ladder and 9 rows", model.caps, model.settingsRows())
+	if !model.caps.QualityLadder || len(model.settingsRows()) != 10 {
+		t.Fatalf("caps = %+v, rows = %v; want ladder and 10 rows", model.caps, model.settingsRows())
 	}
 }

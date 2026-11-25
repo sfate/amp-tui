@@ -41,6 +41,7 @@ type Model struct {
 	notice string
 
 	engine          playback.Engine
+	engineFactory   func(config.PlaybackEngine) playback.Engine
 	runtime         *playerRuntime
 	session         playback.Session
 	playbackEvents  chan tea.Msg
@@ -91,6 +92,7 @@ func newWithConfig(cfg config.Config, loadErr error, o options) Model {
 	cfg = normalizeConfig(cfg)
 	model := newModel(app.New(cfg), nil, nil)
 	model.engine = o.engine
+	model.engineFactory = o.engineFactory
 	model.registry = o.registry
 	model.secrets = o.secrets
 	model.configLoadErr = loadErr

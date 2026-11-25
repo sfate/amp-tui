@@ -13,7 +13,7 @@ import (
 
 	"github.com/sfate/amp-tui/internal/config"
 	"github.com/sfate/amp-tui/internal/doctor"
-	"github.com/sfate/amp-tui/internal/playback/native"
+	"github.com/sfate/amp-tui/internal/playback/enginefactory"
 	"github.com/sfate/amp-tui/internal/provider"
 	"github.com/sfate/amp-tui/internal/provider/deezer"
 	"github.com/sfate/amp-tui/internal/secrets"
@@ -83,11 +83,19 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg, configErr := config.Load()
+	if configErr != nil {
+		cfg = config.Default()
+	}
 	if o.doctor {
-		checks := append(doctor.PlatformChecks(), doctor.SecretStoreCheck(secrets.NewKeyring(), secretsPath))
+		checks := doctor.PlatformChecks()
+		if cfg.Engine != config.EngineNative {
+			checks = append(checks, doctor.MPVCheck(cfg.Engine != config.EngineMPV))
+		}
+		checks = append(checks, doctor.SecretStoreCheck(secrets.NewKeyring(), secretsPath))
 		return doctor.Run(context.Background(), os.Stdout, checks)
 	}
-	model := tui.New(tui.WithEngine(native.New()), tui.WithRegistry(reg), tui.WithSecrets(secrets.Default(secretsPath)), tui.WithProviderOverride(o.provider))
+	model := tui.New(tui.WithEngine(enginefactory.Select(cfg.Engine)), tui.WithEngineFactory(enginefactory.Select), tui.WithRegistry(reg), tui.WithSecrets(secrets.Default(secretsPath)), tui.WithProviderOverride(o.provider))
 	_, err = tea.NewProgram(model).Run()
 	return err
 }

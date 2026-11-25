@@ -23,6 +23,7 @@ const DefaultProvider = "deezer"
 type Config struct {
 	SchemaVersion       int                         `json:"schema_version"`
 	Provider            string                      `json:"provider"`
+	Engine              PlaybackEngine              `json:"engine"`
 	Theme               colorscheme.Name            `json:"theme"`
 	CrossfadeEnabled    bool                        `json:"crossfade_enabled"`
 	CrossfadeDurationMS uint64                      `json:"crossfade_duration_ms"`
@@ -31,6 +32,14 @@ type Config struct {
 	CompactView         bool                        `json:"compact_view"`
 	Providers           map[string]ProviderSettings `json:"providers,omitempty"`
 }
+
+type PlaybackEngine string
+
+const (
+	EngineAuto   PlaybackEngine = "auto"
+	EngineMPV    PlaybackEngine = "mpv"
+	EngineNative PlaybackEngine = "native"
+)
 
 // ProviderSettings holds the non-secret settings of one provider.
 type ProviderSettings struct {
@@ -53,6 +62,7 @@ func Default() Config {
 	return Config{
 		SchemaVersion:       SchemaVersion,
 		Provider:            DefaultProvider,
+		Engine:              EngineAuto,
 		Theme:               colorscheme.Aetheria,
 		CrossfadeEnabled:    false,
 		CrossfadeDurationMS: 0,
@@ -143,6 +153,7 @@ func decode(data []byte) (Config, error) {
 	var raw map[string]json.RawMessage
 	_ = json.Unmarshal(data, &raw)
 	cfg.Theme = colorscheme.Normalize(cfg.Theme)
+	cfg.Engine = NormalizeEngine(cfg.Engine)
 	if _, ok := raw["display_mode"]; !ok {
 		_, hasLegacyDisplayEnabled := raw["display_enabled"]
 		cfg.DisplayMode = NormalizeDisplayMode("", !hasLegacyDisplayEnabled || cfg.DisplayEnabled)
@@ -156,6 +167,7 @@ func decode(data []byte) (Config, error) {
 func Save(cfg Config) error {
 	cfg.SchemaVersion = SchemaVersion
 	cfg.Theme = colorscheme.Normalize(cfg.Theme)
+	cfg.Engine = NormalizeEngine(cfg.Engine)
 	cfg.DisplayMode = NormalizeDisplayMode(cfg.DisplayMode, cfg.DisplayEnabled)
 	cfg.DisplayEnabled = cfg.DisplayMode != DisplayModeOff
 	path, err := ConfigFilePath()
@@ -167,6 +179,15 @@ func Save(cfg Config) error {
 		return err
 	}
 	return fsutil.WriteFileAtomic(path, data, 0o600)
+}
+
+func NormalizeEngine(engine PlaybackEngine) PlaybackEngine {
+	switch engine {
+	case EngineAuto, EngineMPV, EngineNative:
+		return engine
+	default:
+		return EngineAuto
+	}
 }
 
 func NormalizeDisplayMode(mode DisplayMode, legacyEnabled bool) DisplayMode {

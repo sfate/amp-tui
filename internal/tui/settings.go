@@ -17,6 +17,7 @@ type settingsRowID string
 const (
 	settingProvider    settingsRowID = "provider"
 	settingAccount     settingsRowID = "account"
+	settingEngine      settingsRowID = "engine"
 	settingTheme       settingsRowID = "theme"
 	settingVolume      settingsRowID = "volume"
 	settingQuality     settingsRowID = "quality"
@@ -32,7 +33,7 @@ func (m Model) settingsRows() []settingsRowID {
 	if m.catalog.auth != nil {
 		rows = append(rows, settingAccount)
 	}
-	rows = append(rows, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView)
+	rows = append(rows, settingEngine, settingTheme, settingVolume, settingCrossfade, settingDuration, settingDisplay, settingCompactView)
 	if m.caps.QualityLadder {
 		rows = append(rows, settingQuality)
 	}
@@ -80,6 +81,25 @@ func (m *Model) adjustSelectedSetting(direction int) tea.Cmd {
 	switch m.selectedSettingRow() {
 	case settingProvider:
 		return m.switchProvider(direction)
+	case settingEngine:
+		m.app.Config.Engine = nextPlaybackEngine(m.app.Config.Engine, direction)
+		if m.session != nil {
+			m.session.Stop()
+			m.session = nil
+		}
+		m.nextPlaybackID++
+		m.currentPlayID = 0
+		m.app.IsPlaying = false
+		m.app.NowPlaying = nil
+		m.progress.active = false
+		m.visualizer.reset()
+		if m.engineFactory != nil {
+			m.engine = m.engineFactory(m.app.Config.Engine)
+			m.runtime = newPlayerRuntime(m.engine, m.provider)
+		}
+		m.app.StatusMessage = fmt.Sprintf("Engine: %s (playback stopped)", playbackEngineLabel(m.app.Config.Engine))
+		m.syncMediaControl()
+		m.persistConfig()
 	case settingTheme:
 		m.app.Config.Theme = colorscheme.Next(m.app.Config.Theme, direction)
 		applyTheme(m.app.Config.Theme)
@@ -266,6 +286,8 @@ func (m Model) settingsRowView(id settingsRowID) (label, value, color string) {
 		return "Provider", name, activePalette.Purple
 	case settingAccount:
 		return "Account", ternary(m.signedIn(), "Signed in", "Not signed in"), activePalette.Green
+	case settingEngine:
+		return "Engine", playbackEngineLabel(m.app.Config.Engine), activePalette.Purple
 	case settingTheme:
 		return "Theme", colorscheme.Label(m.app.Config.Theme), activePalette.Blue
 	case settingVolume:
@@ -280,5 +302,29 @@ func (m Model) settingsRowView(id settingsRowID) (label, value, color string) {
 		return "Display", displayModeLabel(m.app.Config.DisplayMode), activePalette.Aqua
 	default:
 		return "Compact View", onOff(m.app.Config.CompactView), activePalette.Green
+	}
+}
+
+func nextPlaybackEngine(current config.PlaybackEngine, direction int) config.PlaybackEngine {
+	choices := []config.PlaybackEngine{config.EngineAuto, config.EngineMPV, config.EngineNative}
+	idx := 0
+	for i, choice := range choices {
+		if choice == config.NormalizeEngine(current) {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + direction + len(choices)) % len(choices)
+	return choices[idx]
+}
+
+func playbackEngineLabel(engine config.PlaybackEngine) string {
+	switch config.NormalizeEngine(engine) {
+	case config.EngineMPV:
+		return "mpv"
+	case config.EngineNative:
+		return "Native"
+	default:
+		return "Auto"
 	}
 }
